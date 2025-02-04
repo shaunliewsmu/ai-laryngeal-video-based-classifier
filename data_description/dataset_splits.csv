@@ -1,0 +1,7 @@
+Split,Category,Count
+train,referral,61
+train,non_referral,31
+val,referral,14
+val,non_referral,6
+test,referral,13
+test,non_referral,7

@@ -1,0 +1,11 @@
+venv
+logs
+data
+dataset_balanced
+videos
+wandb
+artifacts
+model/
+training_results/
+.env
+__pycache__
