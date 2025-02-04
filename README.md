@@ -14,7 +14,6 @@ open `training.ipynb` and run the code accordingly.
 
 ## make sure that you have Weights and Bias Account ready to access all the saved artifacts and logs
 
-
 ### Dataset Description:
 
 Overall Distribution:
