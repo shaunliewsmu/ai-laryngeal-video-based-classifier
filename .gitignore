@@ -5,6 +5,7 @@ dataset_balanced
 videos
 wandb
 artifacts
+output
 model/
 training_results/
 .env
