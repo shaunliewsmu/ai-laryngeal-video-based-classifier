@@ -6,6 +6,7 @@ videos
 wandb
 artifacts
 output
+iqm_filtered_dataset
 model/
 training_results/
 .env

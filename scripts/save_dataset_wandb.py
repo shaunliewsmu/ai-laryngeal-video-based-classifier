@@ -8,13 +8,13 @@ def save_to_wandb():
     
     # Create a new artifact
     artifact = wandb.Artifact(
-        name="laryngeal_dataset_balanced",
+        name="laryngeal_dataset_iqm_filtered",
         type="dataset",
-        description="Balanced laryngeal cancer dataset split into train/val/test"
+        description="Balanced laryngeal cancer dataset split into train/val/test after filtered by IQM YOLOv5"
     )
     
     # Base directory of the balanced dataset
-    dataset_dir = 'dataset_balanced'
+    dataset_dir = 'iqm_filtered_dataset'
     
     # Add the entire dataset directory to the artifact
     artifact.add_dir(dataset_dir, name="dataset")
@@ -48,11 +48,11 @@ def save_to_wandb():
     )
     
     # Save statistics to CSV
-    stats_file = "dataset_statistics.csv"
+    stats_file = "iqm_filtered_dataset_statistics.csv"
     stats_df.to_csv(stats_file)
     
     # Add statistics file to artifact
-    artifact.add_file(stats_file, name="dataset_statistics.csv")
+    artifact.add_file(stats_file, name="iqm_filtered_dataset_statistics.csv")
     
     # Log metadata table to wandb
     table_data = []
