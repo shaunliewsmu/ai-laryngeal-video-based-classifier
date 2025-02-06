@@ -56,7 +56,7 @@ def sample_frame_indices(clip_len, frame_sample_rate, seg_len):
     return indices
 
 
-def frames_convert_and_create_dataset_dictionary(directory):
+def frames_convert_and_create_dataset_dictionary(directory, number_of_frames=10):
     class_labels = []
     all_videos = []
     sizes = []
@@ -88,7 +88,7 @@ def frames_convert_and_create_dataset_dictionary(directory):
                     print(f"Processing file {video_file} number of Frames: {num_frames}")
                     
                     # Sample frames
-                    indices = sample_frame_indices(clip_len=10, 
+                    indices = sample_frame_indices(clip_len=number_of_frames, 
                                                 frame_sample_rate=1,
                                                 seg_len=num_frames)
                     video = read_video_pyav(container=container, indices=indices)

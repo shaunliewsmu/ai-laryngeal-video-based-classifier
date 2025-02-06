@@ -30,7 +30,7 @@ def collate_fn(batch):
     }
 
 
-def initialise_model(shuffled_dataset, device="cpu", model="google/vivit-b-16x2-kinetics400"):
+def initialise_model(shuffled_dataset, device="cpu", model="google/vivit-b-16x2-kinetics400", number_of_frames=10):
     """initialize model
     """ 
     labels = shuffled_dataset['train'].features['labels'].names
@@ -38,8 +38,8 @@ def initialise_model(shuffled_dataset, device="cpu", model="google/vivit-b-16x2-
     config.num_classes=len(labels)
     config.id2label = {str(i): c for i, c in enumerate(labels)}
     config.label2id = {c: str(i) for i, c in enumerate(labels)}
-    config.num_frames=10
-    config.video_size= [10, 224, 224]
+    config.num_frames=number_of_frames
+    config.video_size= [number_of_frames, 224, 224]
     
     model = VivitForVideoClassification.from_pretrained(
     model,
