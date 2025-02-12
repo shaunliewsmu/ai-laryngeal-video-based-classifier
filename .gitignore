@@ -9,5 +9,7 @@ output
 iqm_filtered_dataset
 model/
 training_results/
+training_result/
 .env
+.ipynb_checkpoints
 __pycache__
