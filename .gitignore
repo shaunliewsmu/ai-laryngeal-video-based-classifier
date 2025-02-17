@@ -10,6 +10,7 @@ iqm_filtered_dataset
 model/
 training_results/
 training_result/
+resnet-models/
 .env
 .ipynb_checkpoints
 __pycache__
