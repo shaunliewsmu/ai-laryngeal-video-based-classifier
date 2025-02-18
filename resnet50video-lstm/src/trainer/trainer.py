@@ -83,12 +83,12 @@ def train_model(model, train_loader, val_loader, device, config):
         avg_train_loss = train_loss / len(train_loader)
         train_metrics = calculate_metrics(train_labels, train_predictions)
         train_aurocs.append(train_metrics['auroc'])
-        
+       
         # Plot training confusion matrix
         plot_confusion_matrix(
             train_labels, 
             train_predictions,
-            os.path.join(config['viz_dir'], 'visualizations', f'train_confusion_matrix_epoch_{epoch+1}.png'),
+            os.path.join(config['viz_dir'], f'train_confusion_matrix_epoch_{epoch+1}.png'),
             f'Training Confusion Matrix - Epoch {epoch+1}'
         )
         
@@ -126,7 +126,7 @@ def train_model(model, train_loader, val_loader, device, config):
         plot_confusion_matrix(
             val_labels, 
             val_predictions,
-            os.path.join(config['viz_dir'], 'visualizations', f'val_confusion_matrix_epoch_{epoch+1}.png'),
+            os.path.join(config['viz_dir'], f'val_confusion_matrix_epoch_{epoch+1}.png'),
             f'Validation Confusion Matrix - Epoch {epoch+1}'
         )
         
@@ -140,7 +140,7 @@ def train_model(model, train_loader, val_loader, device, config):
             epoch + 1,
             train_aurocs,
             val_aurocs,
-            os.path.join(config['viz_dir'], 'visualizations', f'auroc_curves_epoch_{epoch+1}.png')
+            os.path.join(config['viz_dir'], f'auroc_curves_epoch_{epoch+1}.png')
         )
         
         # Log metrics to wandb
