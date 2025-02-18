@@ -46,16 +46,35 @@ def setup_logging(log_dir):
     )
 
 def plot_confusion_matrix(y_true, y_pred, save_path, title='Confusion Matrix'):
-    """Plot confusion matrix using seaborn"""
-    cm = confusion_matrix(y_true, np.round(y_pred))
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    """Plot confusion matrix using seaborn with string labels"""
+    # Convert numeric predictions to string labels
+    y_pred_labels = ['non_referral' if pred < 0.5 else 'referral' for pred in y_pred]
+    y_true_labels = ['non_referral' if label == 0 else 'referral' for label in y_true]
+    
+    # Create confusion matrix
+    cm = confusion_matrix(y_true_labels, y_pred_labels)
+    
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=['non_referral', 'referral'],
+                yticklabels=['non_referral', 'referral'])
     plt.title(title)
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
     plt.savefig(save_path)
     plt.close()
+
+def print_class_metrics(y_true, y_pred, split=''):
+    """Print class-wise metrics with string labels"""
+    y_pred_binary = np.round(y_pred)
     
+    logging.info(f'\n{split}:')
+    for cls, label in [(0, 'non_referral'), (1, 'referral')]:
+        mask = np.array(y_true) == cls
+        if np.any(mask):
+            cls_acc = accuracy_score(np.array(y_true)[mask], y_pred_binary[mask])
+            logging.info(f'{label} accuracy: {cls_acc:.4f}')
+            
 def plot_sampled_frames(video_path, sampled_indices, save_path):
     """Plot and save sampled frames from a video"""
     cap = cv2.VideoCapture(video_path)
@@ -87,9 +106,12 @@ def plot_sampled_frames(video_path, sampled_indices, save_path):
 
 def plot_auroc_curve(epochs, train_aurocs, val_aurocs, save_path):
     """Plot training and validation AUROC curves"""
+    # Get actual number of epochs trained
+    actual_epochs = len(train_aurocs)
+    
     plt.figure(figsize=(10, 6))
-    plt.plot(range(1, epochs + 1), train_aurocs, label='Train AUROC', marker='o')
-    plt.plot(range(1, epochs + 1), val_aurocs, label='Validation AUROC', marker='o')
+    plt.plot(range(1, actual_epochs + 1), train_aurocs, label='Train AUROC', marker='o')
+    plt.plot(range(1, actual_epochs + 1), val_aurocs, label='Validation AUROC', marker='o')
     plt.xlabel('Epoch')
     plt.ylabel('AUROC')
     plt.title('Training and Validation AUROC over Epochs')
@@ -223,7 +245,6 @@ class VideoResNetLSTM(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(64, 1),
-            nn.Sigmoid()
         )
         
     def forward(self, x):
@@ -251,7 +272,9 @@ def train_model(model, train_loader, val_loader, device, config):
     class_weights = torch.FloatTensor([num_samples/(2*num_class_0), 
                                      num_samples/(2*num_class_1)]).to(device)
     
-    criterion = nn.BCELoss(weight=class_weights)
+     # New way to handle class weights using pos_weight in BCEWithLogitsLoss
+    pos_weight = torch.tensor([num_samples/(2*num_class_1) / (num_samples/(2*num_class_0))]).to(device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()), 
         lr=config['learning_rate']
@@ -288,11 +311,21 @@ def train_model(model, train_loader, val_loader, device, config):
                 optimizer.step()
                 
                 train_loss += loss.item()
-                train_predictions.extend(outputs.cpu().detach().numpy())
+                # Apply sigmoid to get predictions
+                predictions = torch.sigmoid(outputs).cpu().detach().numpy()
+                train_predictions.extend(predictions)
                 train_labels.extend(labels.cpu().numpy())
             except Exception as e:
                 logging.warning(f"Error processing batch: {str(e)}")
                 continue
+        
+        # Convert lists to numpy arrays
+        train_predictions = np.array(train_predictions).squeeze()
+        train_labels = np.array(train_labels)
+        
+        if len(train_predictions) == 0 or len(train_labels) == 0:
+            logging.error("No training predictions or labels collected")
+            continue
         
         avg_train_loss = train_loss / len(train_loader)
         train_auroc = roc_auc_score(train_labels, train_predictions)
@@ -320,8 +353,18 @@ def train_model(model, train_loader, val_loader, device, config):
                 outputs = model(videos)
                 loss = criterion(outputs, labels.unsqueeze(1))
                 val_loss += loss.item()
-                val_predictions.extend(outputs.cpu().numpy())
+                # Apply sigmoid to get predictions
+                predictions = torch.sigmoid(outputs).cpu().numpy()
+                val_predictions.extend(predictions)
                 val_labels.extend(labels.cpu().numpy())
+        
+         # Convert lists to numpy arrays
+        val_predictions = np.array(val_predictions).squeeze()
+        val_labels = np.array(val_labels)
+        
+        if len(val_predictions) == 0 or len(val_labels) == 0:
+            logging.error("No validation predictions or labels collected")
+            continue
         
         avg_val_loss = val_loss / len(val_loader)
         val_auroc = roc_auc_score(val_labels, val_predictions)
@@ -386,6 +429,8 @@ def train_model(model, train_loader, val_loader, device, config):
         
         # Print class-wise metrics
         logging.info('Class-wise metrics:')
+        print_class_metrics(train_labels, train_predictions, 'Training')
+        print_class_metrics(val_labels, val_predictions, 'Validation')
         for split, (y_true, y_pred) in [('Training', (train_labels, train_predictions)), 
                                        ('Validation', (val_labels, val_predictions))]:
             y_pred_binary = np.round(y_pred)
@@ -529,7 +574,7 @@ def main():
     
     # Plot final AUROC curves
     plot_auroc_curve(
-        config['epochs'],
+        len(train_aurocs),  # Use actual number of epochs instead of config['epochs']
         train_aurocs,
         val_aurocs,
         os.path.join(viz_dir, 'final_auroc_curves.png')
@@ -545,27 +590,37 @@ def main():
         for videos, labels in tqdm(test_loader, desc='Testing'):
             videos = videos.to(device)
             outputs = model(videos)
-            test_predictions.extend(outputs.cpu().numpy())
+            # Apply sigmoid to get predictions
+            predictions = torch.sigmoid(outputs).cpu().numpy()
+            test_predictions.extend(predictions)
             test_labels.extend(labels.numpy())
+     # Convert lists to numpy arrays
+    test_predictions = np.array(test_predictions).squeeze()
+    test_labels = np.array(test_labels)
     
-    test_auroc = roc_auc_score(test_labels, test_predictions)
-    test_accuracy = accuracy_score(test_labels, np.round(test_predictions))
-    test_precision = precision_score(test_labels, np.round(test_predictions))
-    test_recall = recall_score(test_labels, np.round(test_predictions))
-    test_f1 = f1_score(test_labels, np.round(test_predictions))
-    plot_confusion_matrix(
-        test_labels, 
-        test_predictions,
-        os.path.join(viz_dir, 'test_confusion_matrix.png'),
-        'Test Set Confusion Matrix'
-    )
-    logging.info('Test Results:')
-    logging.info(f'AUROC: {test_auroc:.4f}')
-    logging.info(f'Accuracy: {test_accuracy:.4f}')
-    logging.info(f'Precision: {test_precision:.4f}')
-    logging.info(f'Recall: {test_recall:.4f}')
-    logging.info(f'F1 Score: {test_f1:.4f}')
-    logging.info(f'Visualizations saved in: {viz_dir}')
+    if len(test_predictions) > 0 and len(test_labels) > 0:
+        test_auroc = roc_auc_score(test_labels, test_predictions)
+        test_accuracy = accuracy_score(test_labels, np.round(test_predictions))
+        test_precision = precision_score(test_labels, np.round(test_predictions))
+        test_recall = recall_score(test_labels, np.round(test_predictions))
+        test_f1 = f1_score(test_labels, np.round(test_predictions))
+        
+        plot_confusion_matrix(
+            test_labels, 
+            np.round(test_predictions),
+            os.path.join(viz_dir, 'test_confusion_matrix.png'),
+            'Test Set Confusion Matrix'
+        )
+        
+        logging.info('Test Results:')
+        logging.info(f'AUROC: {test_auroc:.4f}')
+        logging.info(f'Accuracy: {test_accuracy:.4f}')
+        logging.info(f'Precision: {test_precision:.4f}')
+        logging.info(f'Recall: {test_recall:.4f}')
+        logging.info(f'F1 Score: {test_f1:.4f}')
+        print_class_metrics(test_labels, test_predictions, 'Test')
+    else:
+        logging.error("No test predictions or labels collected")
 
 if __name__ == "__main__":
     main()
