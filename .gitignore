@@ -11,6 +11,7 @@ model/
 training_results/
 training_result/
 resnet-models/
+resnet_inference_results/
 .env
 .ipynb_checkpoints
 __pycache__
