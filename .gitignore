@@ -10,7 +10,7 @@ iqm_filtered_dataset
 model/
 training_results/
 training_result/
-resnet-models/
+resnet50-models/
 resnet_inference_results/
 .env
 .ipynb_checkpoints

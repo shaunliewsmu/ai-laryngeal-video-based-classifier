@@ -583,7 +583,7 @@ if __name__ == "__main__":
     main()
     
 """
-python3 test.py \
+python3 resnet-pytorchvideo.py \
     --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
     --log_dir logs \
     --model_dir model \
