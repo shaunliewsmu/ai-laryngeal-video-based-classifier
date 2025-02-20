@@ -1,5 +1,6 @@
 import torch
 import argparse
+import json
 from pathlib import Path
 from pytorchvideo.data.encoded_video import EncodedVideo
 from torchvision.transforms import Compose
@@ -14,7 +15,7 @@ from torchvision.transforms._transforms_video import (
 )
 
 from video_classifier.models.resnet3d import create_model
-from video_classifier.utils.logger import setup_logger
+from video_classifier.utils.logger import ExperimentLogger
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Video Classification Inference')
@@ -22,7 +23,7 @@ def parse_args():
                       help='Path to input video file')
     parser.add_argument('--model_path', type=str, required=True,
                       help='Path to saved model checkpoint')
-    parser.add_argument('--log_dir', type=str, default='inference_logs',
+    parser.add_argument('--log_dir', type=str, default='logs',
                       help='Directory to save inference logs')
     parser.add_argument('--num_frames', type=int, default=32,
                       help='Number of frames to sample')
@@ -106,9 +107,35 @@ def predict_video(video_path, model, transform, device, num_frames, fps, logger)
         logger.error(f"Error during prediction: {str(e)}")
         raise
 
+def save_inference_result(exp_logger, video_path, class_name, confidence):
+    """Save inference results to a JSON file."""
+    # Prepare result dictionary
+    result = {
+        "video_path": str(video_path),
+        "predicted_class": class_name,
+        "confidence": confidence
+    }
+    
+    # Create results directory if it doesn't exist
+    results_dir = exp_logger.get_experiment_dir() / 'inference_results'
+    results_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate filename based on video name
+    video_filename = Path(video_path).stem
+    result_path = results_dir / f'{video_filename}_result.json'
+    
+    # Save results to JSON
+    with open(result_path, 'w') as f:
+        json.dump(result, f, indent=4)
+    
+    exp_logger.get_logger().info(f"Inference result saved to {result_path}")
+
 def main():
     args = parse_args()
-    logger = setup_logger(args.log_dir)
+    
+    # Use ExperimentLogger with a specific prefix for inference
+    experiment_logger = ExperimentLogger(args.log_dir, prefix='inference-resnet50')
+    logger = experiment_logger.get_logger()
     
     try:
         # Set device
@@ -132,6 +159,9 @@ def main():
             logger
         )
         
+        # Save inference result
+        save_inference_result(experiment_logger, args.video_path, class_name, confidence)
+        
         print(f"\nResults:")
         print(f"Class: {class_name}")
         print(f"Confidence: {confidence:.4f}")
@@ -144,9 +174,10 @@ if __name__ == "__main__":
     main()
     
 """
+Example usage:
 python3 resnet50video-pytorchvideo/inference.py \
     --video_path artifacts/laryngeal_dataset_balanced:v0/dataset/val/referral/0047.mp4 \
-    --model_path resnet50-models/best_model.pth \
+    --model_path model/20250220_175039_resnet50_best_model.pth \
     --num_frames 32 \
     --fps 2
 """

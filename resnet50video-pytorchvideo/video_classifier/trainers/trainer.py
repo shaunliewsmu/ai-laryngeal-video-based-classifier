@@ -2,20 +2,22 @@ import torch
 import os
 import json
 from tqdm import tqdm
+from datetime import datetime
 from video_classifier.utils.visualization import TrainingVisualizer
-
+from video_classifier.utils.early_stopping import EarlyStopping
 class ModelTrainer:
-    def __init__(self, model, dataloaders, criterion, optimizer, device, args, logger):
+    def __init__(self, model, dataloaders, criterion, optimizer, device, args, exp_logger):
         self.model = model
         self.dataloaders = dataloaders
         self.criterion = criterion
         self.optimizer = optimizer
         self.device = device
         self.args = args
-        self.logger = logger
+        self.logger = exp_logger.get_logger()
+        self.exp_dir = exp_logger.get_experiment_dir()
         
-        # Initialize visualizer
-        self.visualizer = TrainingVisualizer(args.log_dir)
+        # Initialize visualizer with experiment directory
+        self.visualizer = TrainingVisualizer(self.exp_dir)
         
         # Initialize training history
         self.history = {
@@ -25,16 +27,22 @@ class ModelTrainer:
             'val_acc': []
         }
         
-        # Create directories
-        os.makedirs(args.log_dir, exist_ok=True)
-        os.makedirs(args.model_dir, exist_ok=True)
+        timestamp= datetime.now().strftime('%Y%m%d_%H%M%S')
+        # Initialize early stopping
+        self.early_stopping = EarlyStopping(
+            patience=args.patience,
+            verbose=True,
+            delta=args.early_stopping_delta,
+            path=self.exp_dir / f'{timestamp}_resnet50_best_model.pth',
+            trace_func=self.logger.info
+        )
         
         # Save training configuration
         self._save_config()
         
     def _save_config(self):
         """Save training configuration to JSON file."""
-        config_path = os.path.join(self.args.log_dir, 'training_config.json')
+        config_path = self.exp_dir / 'training_config.json'
         config = vars(self.args)
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=4)
@@ -150,7 +158,8 @@ class ModelTrainer:
     
     def _save_best_model(self, epoch, best_val_acc, best_model_weights):
         """Save the best model checkpoint."""
-        model_path = os.path.join(self.args.model_dir, 'best_model.pth')
+        timestamp= datetime.now().strftime('%Y%m%d_%H%M%S')
+        model_path = os.path.join(self.args.model_dir, f'{timestamp}_resnet50_best_model.pth')
         torch.save({
             'epoch': epoch,
             'model_state_dict': best_model_weights,

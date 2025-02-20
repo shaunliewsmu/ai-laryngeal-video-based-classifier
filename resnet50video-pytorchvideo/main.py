@@ -3,16 +3,14 @@ import torch.nn as nn
 import numpy as np
 import random
 import argparse
-import torch.cuda
 
 from video_classifier.data_config.dataloader import create_dataloaders
 from video_classifier.models.resnet3d import create_model
 from video_classifier.trainers.trainer import ModelTrainer
 from video_classifier.evaluators.evaluator import ModelEvaluator
-from video_classifier.utils.logger import setup_logger
+from video_classifier.utils.logger import ExperimentLogger
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Video Classification Training')
     parser.add_argument('--data_dir', type=str, required=True,
                       help='Path to dataset directory')
@@ -30,11 +28,11 @@ def parse_args():
                       choices=['random', 'uniform', 'sliding'],
                       help='Sampling method for testing')
     parser.add_argument('--num_frames', type=int, default=32,
-                      help='Number of frames to sample from each video')
+                      help='Number of frames to sample')
     parser.add_argument('--fps', type=int, default=30,
-                      help='Frames per second in the videos')
+                      help='Frames per second')
     parser.add_argument('--stride', type=float, default=0.5,
-                      help='Stride fraction for sliding window (overlap = 1 - stride)')
+                      help='Stride fraction for sliding window')
     parser.add_argument('--batch_size', type=int, default=8,
                       help='Batch size')
     parser.add_argument('--num_workers', type=int, default=4,
@@ -45,11 +43,14 @@ def parse_args():
                       help='Initial learning rate')
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
+    parser.add_argument('--patience', type=int, default=7,
+                      help='Early stopping patience')
+    parser.add_argument('--early_stopping_delta', type=float, default=0.001,
+                      help='Early stopping delta')
     
     return parser.parse_args()
 
 def main():
-    """Main training and evaluation pipeline."""
     # Parse arguments
     args = parse_args()
     
@@ -58,15 +59,11 @@ def main():
     np.random.seed(args.seed)
     random.seed(args.seed)
     
-    # Setup logger
-    logger = setup_logger(args.log_dir)
+    # Setup experiment logging
+    exp_logger = ExperimentLogger(args.log_dir)
+    logger = exp_logger.get_logger()
     logger.info("Starting video classification training")
     logger.info(f"Arguments: {vars(args)}")
-    
-    # Clear GPU cache
-    torch.cuda.empty_cache()
-    if torch.cuda.is_available():
-        logger.info(torch.cuda.memory_summary(device=None, abbreviated=False))
     
     try:
         # Set device
@@ -95,7 +92,7 @@ def main():
         # Train model
         logger.info("Starting model training...")
         trainer = ModelTrainer(
-            model, dataloaders, criterion, optimizer, device, args, logger
+            model, dataloaders, criterion, optimizer, device, args, exp_logger
         )
         model = trainer.train()
         logger.info("Model training completed")
@@ -107,7 +104,7 @@ def main():
             dataloaders['test'],
             device,
             args,
-            logger
+            exp_logger
         )
         auroc, f1, conf_matrix = evaluator.evaluate()
         logger.info("Model evaluation completed")
@@ -120,20 +117,18 @@ def main():
 
 if __name__ == "__main__":
     main()
-
+    
 """
 python3 resnet50video-pytorchvideo/main.py \
     --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
     --log_dir logs \
     --model_dir resnet50-models \
-    --train_sampling uniform \
-    --val_sampling uniform \
-    --test_sampling uniform \
     --num_frames 32 \
     --fps 2 \
     --stride 0.5 \
     --batch_size 2 \
-    --epochs 1 \
+    --epochs 100 \
     --learning_rate 0.001 \
-    --num_workers 2
+    --num_workers 2 \
+    --patience 7
 """

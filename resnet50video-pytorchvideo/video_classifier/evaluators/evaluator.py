@@ -6,15 +6,24 @@ import json
 from video_classifier.utils.visualization import TrainingVisualizer
 
 class ModelEvaluator:
-    def __init__(self, model, dataloader, device, args, logger):
+    def __init__(self, model, dataloader, device, args, exp_logger):
         self.model = model
         self.dataloader = dataloader
         self.device = device
         self.args = args
-        self.logger = logger
-        self.visualizer = TrainingVisualizer(args.log_dir)
+        self.logger = exp_logger.get_logger()
+        self.exp_dir = exp_logger.get_experiment_dir()
+        self.visualizer = TrainingVisualizer(self.exp_dir)
         self.class_names = ['non-referral', 'referral']
         
+    def _save_metrics(self, metrics):
+        """Save evaluation metrics."""
+        metrics_path = self.exp_dir / 'test_metrics.json'
+        with open(metrics_path, 'w') as f:
+            json.dump(metrics, f, indent=4)
+        self.logger.info(f"Saved detailed metrics to {metrics_path}")
+        return metrics
+    
     def evaluate(self):
         """Evaluate the model."""
         self.model.eval()
