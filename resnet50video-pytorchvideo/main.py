@@ -13,7 +13,10 @@ from video_classifier.utils.logger import ExperimentLogger
 def parse_args():
     parser = argparse.ArgumentParser(description='Video Classification Training')
     parser.add_argument('--data_dir', type=str, required=True,
-                      help='Path to dataset directory')
+                      help='Path to training/validation dataset directory')
+    # for test dataset
+    parser.add_argument('--test_data_dir', type=str, default=None,
+                      help='Path to test dataset directory. If not provided, will use data_dir')
     parser.add_argument('--log_dir', type=str, required=True,
                       help='Directory to save logs')
     parser.add_argument('--model_dir', type=str, required=True,
@@ -121,6 +124,7 @@ if __name__ == "__main__":
 """
 python3 resnet50video-pytorchvideo/main.py \
 --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
+--test_data_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset \
 --log_dir logs \
 --model_dir resnet50-models \
 --train_sampling random \

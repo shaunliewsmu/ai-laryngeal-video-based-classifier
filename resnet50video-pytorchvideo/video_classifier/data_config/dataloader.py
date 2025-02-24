@@ -33,7 +33,8 @@ def create_dataloaders(args, logger):
     datasets = {}
     dataloaders = {}
     
-    for split in ['train', 'val', 'test']:
+    # Create train and validation dataloaders
+    for split in ['train', 'val']:
         try:
             datasets[split] = VideoDataset(
                 args.data_dir,
@@ -62,5 +63,36 @@ def create_dataloaders(args, logger):
         except Exception as e:
             logger.error(f"Error creating {split} dataset/dataloader: {str(e)}")
             raise
+
+    # Create test dataloader with potentially different data source
+    try:
+        test_data_dir = args.test_data_dir if args.test_data_dir else args.data_dir
+        datasets['test'] = VideoDataset(
+            test_data_dir,
+            mode='test',
+            sampling_method=sampling_methods['test'],
+            num_frames=args.num_frames,
+            fps=args.fps,
+            stride=args.stride,
+            logger=logger
+        )
+        
+        dataloaders['test'] = DataLoader(
+            datasets['test'],
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            collate_fn=video_collate_fn
+        )
+        
+        logger.info(
+            f"Created test dataloader from {test_data_dir} with "
+            f"{len(dataloaders['test'])} batches (batch size: {args.batch_size})"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating test dataset/dataloader: {str(e)}")
+        raise
     
     return dataloaders
