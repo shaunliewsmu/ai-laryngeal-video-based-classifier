@@ -5,6 +5,7 @@ from tqdm import tqdm
 from datetime import datetime
 from video_classifier.utils.visualization import TrainingVisualizer
 from video_classifier.utils.early_stopping import EarlyStopping
+
 class ModelTrainer:
     def __init__(self, model, dataloaders, criterion, optimizer, device, args, exp_logger):
         self.model = model
@@ -27,7 +28,12 @@ class ModelTrainer:
             'val_acc': []
         }
         
-        timestamp= datetime.now().strftime('%Y%m%d_%H%M%S')
+        # Initialize best metrics tracking
+        self.best_val_loss = float('inf')
+        self.best_val_acc = 0.0
+        self.acc_threshold = 0.02  # Allow 2% accuracy drop from best
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         # Initialize early stopping
         self.early_stopping = EarlyStopping(
             patience=args.patience,
@@ -48,9 +54,23 @@ class ModelTrainer:
             json.dump(config, f, indent=4)
         self.logger.info(f"Saved training configuration to {config_path}")
         
+    def _should_save_model(self, val_loss, val_acc):
+        """
+        Determine if model should be saved based on validation metrics.
+        Returns True if:
+        1. Loss has improved AND accuracy is within threshold of best accuracy
+        2. OR if this is the first validation run
+        """
+        if self.best_val_loss == float('inf'):  # First run
+            return True
+            
+        acc_within_threshold = val_acc >= (self.best_val_acc - self.acc_threshold)
+        loss_improved = val_loss < self.best_val_loss
+        
+        return loss_improved and acc_within_threshold
+        
     def train(self):
         """Train the model."""
-        best_val_acc = 0.0
         best_model_weights = None
         
         # Main epoch progress bar
@@ -138,10 +158,14 @@ class ModelTrainer:
                     f'{epoch_loss:.4f} Acc: {epoch_acc:.4f}'
                 )
                 
-                if phase == 'val' and epoch_acc > best_val_acc:
-                    best_val_acc = epoch_acc
-                    best_model_weights = self.model.state_dict().copy()
-                    self._save_best_model(epoch, best_val_acc, best_model_weights)
+                if phase == 'val':
+                    # Check if model should be saved
+                    if self._should_save_model(epoch_loss, epoch_acc):
+                        self.best_val_loss = epoch_loss
+                        self.best_val_acc = max(epoch_acc, self.best_val_acc)  # Keep highest accuracy
+                        best_model_weights = self.model.state_dict().copy()
+                        self._save_best_model(epoch, epoch_loss, epoch_acc, best_model_weights)
+                        self.logger.info(f'New best model saved! Loss: {epoch_loss:.4f}, Acc: {epoch_acc:.4f}')
                 
                 batch_pbar.close()
                     
@@ -152,19 +176,20 @@ class ModelTrainer:
             # Plot training history after each epoch
             self.visualizer.plot_training_history(self.history)
         
-        self.logger.info(f'Best val Acc: {best_val_acc:4f}')
+        self.logger.info(f'Best val Loss: {self.best_val_loss:.4f}, Best val Acc: {self.best_val_acc:4f}')
         self.model.load_state_dict(best_model_weights)
         return self.model
     
-    def _save_best_model(self, epoch, best_val_acc, best_model_weights):
+    def _save_best_model(self, epoch, val_loss, val_acc, best_model_weights):
         """Save the best model checkpoint."""
-        timestamp= datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         model_path = os.path.join(self.args.model_dir, f'{timestamp}_resnet50_best_model.pth')
         torch.save({
             'epoch': epoch,
             'model_state_dict': best_model_weights,
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'val_acc': best_val_acc,
+            'val_loss': val_loss,
+            'val_acc': val_acc,
             'history': self.history  # Save training history with model
         }, model_path)
         self.logger.info(f"Saved best model to {model_path}")

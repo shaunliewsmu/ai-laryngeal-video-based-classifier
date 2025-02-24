@@ -120,15 +120,19 @@ if __name__ == "__main__":
     
 """
 python3 resnet50video-pytorchvideo/main.py \
-    --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
-    --log_dir logs \
-    --model_dir resnet50-models \
-    --num_frames 32 \
-    --fps 2 \
-    --stride 0.5 \
-    --batch_size 2 \
-    --epochs 100 \
-    --learning_rate 0.001 \
-    --num_workers 2 \
-    --patience 7
+--data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
+--log_dir logs \
+--model_dir resnet50-models \
+--train_sampling random \
+--val_sampling uniform \
+--test_sampling uniform \
+--num_frames 32 \
+--fps 2 \
+--stride 0.5 \
+--batch_size 2 \
+--epochs 40 \
+--learning_rate 0.01 \
+--num_workers 2 \
+--patience 7
+
 """
