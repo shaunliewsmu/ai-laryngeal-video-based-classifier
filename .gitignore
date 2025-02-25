@@ -11,7 +11,9 @@ model/
 training_results/
 training_result/
 resnet50-models/
+resnet2d-lstm-models/
 resnet_inference_results/
+sampling_methods_comparison.png
 .env
 .ipynb_checkpoints
 __pycache__
