@@ -126,7 +126,7 @@ python3 resnet50-3d-video/main.py \
 --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
 --test_data_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset \
 --log_dir logs \
---model_dir resnet50-models \
+--model_dir resnet50-3d-video-models \
 --train_sampling random \
 --val_sampling uniform \
 --test_sampling uniform \
