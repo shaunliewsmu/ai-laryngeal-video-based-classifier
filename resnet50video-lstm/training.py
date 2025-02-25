@@ -1,7 +1,7 @@
 import os
 import torch
 import torch.nn as nn
-import torchvision.models.video as models
+import torchvision.models as models
 from torch.utils.data import Dataset, DataLoader
 import cv2
 import numpy as np
@@ -216,23 +216,23 @@ class VideoDataset(Dataset):
         frames = self.load_video(video_path)
         return frames, torch.tensor(label, dtype=torch.float32)
 
-class VideoResNetLSTM(nn.Module):
+class VideoResNet50LSTM(nn.Module):
     def __init__(self, hidden_size=256, num_layers=2, dropout=0.5):
-        super(VideoResNetLSTM, self).__init__()
+        super(VideoResNet50LSTM, self).__init__()
         
-        # Load pretrained 3D ResNet
-        self.video_resnet = models.r3d_18(
-                weights=models.R3D_18_Weights.KINETICS400_V1
-            )
-        self.video_resnet.fc = nn.Identity()
+        # Load pretrained 2D ResNet50 (instead of 3D ResNet18)
+        self.resnet50 = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+        # Remove the final fully connected layer
+        self.resnet50 = nn.Sequential(*list(self.resnet50.children())[:-1])
         
-        # Freeze video ResNet parameters
-        for param in self.video_resnet.parameters():
+        # Freeze ResNet50 parameters
+        for param in self.resnet50.parameters():
             param.requires_grad = False
             
         # LSTM for temporal processing
+        # Note: ResNet50 outputs 2048-dimensional features (vs 512 for ResNet18)
         self.lstm = nn.LSTM(
-            input_size=512,
+            input_size=2048,
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
@@ -248,12 +248,29 @@ class VideoResNetLSTM(nn.Module):
         )
         
     def forward(self, x):
-        batch_size = x.size(0)
-        x = self.video_resnet(x)
-        x = x.unsqueeze(1)
-        x, _ = self.lstm(x)
-        x = x[:, -1, :]
+        # x shape: [batch_size, channels, frames, height, width]
+        batch_size, C, T, H, W = x.size()
+        
+        # Reshape to process each frame individually
+        x = x.permute(0, 2, 1, 3, 4)  # [batch_size, frames, channels, height, width]
+        x = x.reshape(batch_size * T, C, H, W)  # [batch_size*frames, channels, height, width]
+        
+        # Extract features for each frame using 2D ResNet50
+        x = self.resnet50(x)  # [batch_size*frames, 2048, 1, 1]
+        x = x.squeeze(-1).squeeze(-1)  # [batch_size*frames, 2048]
+        
+        # Reshape back to sequence form
+        x = x.reshape(batch_size, T, -1)  # [batch_size, frames, 2048]
+        
+        # Process sequence with LSTM
+        x, _ = self.lstm(x)  # [batch_size, frames, hidden_size]
+        
+        # Take the final time step output
+        x = x[:, -1, :]  # [batch_size, hidden_size]
+        
+        # Apply classification head
         x = self.classifier(x)
+        
         return x
 
 def train_model(model, train_loader, val_loader, device, config):
@@ -447,7 +464,9 @@ def train_model(model, train_loader, val_loader, device, config):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', type=str, default='dataset',
-                        help='Path to dataset directory')
+                        help='Path to dataset directory for training and validation')
+    parser.add_argument('--test_dir', type=str, default=None,
+                        help='Path to separate test dataset directory (if not specified, will use data_dir)')
     parser.add_argument('--log_dir', type=str, default='logs',
                         help='Path to log directory')
     parser.add_argument('--model_dir', type=str, default='models',
@@ -461,6 +480,8 @@ def main():
     parser.add_argument('--test_sampling', type=str, default='uniform',
                         choices=['uniform', 'random', 'sliding'],
                         help='Frame sampling method for testing')
+    parser.add_argument('--loss_weight', type=float, default=0.3,
+                        help='Weight for loss in model selection (0-1). Higher values prioritize minimizing loss.')
     args = parser.parse_args()
 
     # Set random seed for reproducibility
@@ -473,6 +494,9 @@ def main():
     create_directories(viz_dir)
     setup_logging(args.log_dir)
 
+    # Determine test directory (use data_dir if test_dir is not specified)
+    test_dir = args.test_dir if args.test_dir else args.data_dir
+    
     config = {
         'sequence_length': 32,
         'batch_size': 4,
@@ -482,12 +506,17 @@ def main():
         'num_layers': 2,
         'dropout': 0.5,
         'data_dir': args.data_dir,
+        'test_dir': test_dir,
         'log_dir': args.log_dir,
         'model_dir': args.model_dir,
         'train_sampling': args.train_sampling,
         'val_sampling': args.val_sampling,
-        'test_sampling': args.test_sampling
+        'test_sampling': args.test_sampling,
+        'loss_weight': args.loss_weight
     }
+    
+    logging.info(f"Using training/validation data from: {args.data_dir}")
+    logging.info(f"Using test data from: {test_dir}")
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Using device: {device}')
@@ -513,7 +542,7 @@ def main():
     )
     
     test_dataset = VideoDataset(
-        root_dir=args.data_dir,
+        root_dir=test_dir,
         split='test',
         sequence_length=config['sequence_length'],
         transform=transform,
@@ -562,7 +591,8 @@ def main():
         pin_memory=True
     )
     
-    model = VideoResNetLSTM(
+    # Initialize the modified model with ResNet50 + LSTM
+    model = VideoResNet50LSTM(
         hidden_size=config['hidden_size'],
         num_layers=config['num_layers'],
         dropout=config['dropout']
@@ -628,9 +658,11 @@ if __name__ == "__main__":
 """
 python3 resnet50video-lstm/training.py \
     --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
+    --test_dir artifacts/laryngeal_dataset_test:v0/dataset \
     --log_dir logs \
     --model_dir resnet-models \
     --train_sampling uniform \
     --val_sampling uniform \
-    --test_sampling uniform
+    --test_sampling uniform \
+    --loss_weight 0.3
 """

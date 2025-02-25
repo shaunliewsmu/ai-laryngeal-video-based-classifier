@@ -12,14 +12,16 @@ from src.config.config import SEED, DEFAULT_CONFIG
 from src.utils.logging_utils import set_seed, create_directories, setup_logging
 from src.utils.visualization import plot_sampled_frames,plot_confusion_matrix
 from src.data_config.dataset import VideoDataset
-from src.models.model import VideoResNetLSTM
+from src.models.model import VideoResNet50LSTM
 from src.trainer.trainer import train_model
 from src.utils.metrics import calculate_metrics, print_class_metrics
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', type=str, default='dataset',
-                        help='Path to dataset directory')
+                        help='Path to dataset directory for training and validation')
+    parser.add_argument('--test_dir', type=str, default=None,
+                        help='Path to separate test dataset directory (if not specified, will use data_dir)')
     parser.add_argument('--log_dir', type=str, default='logs',
                         help='Path to log directory')
     parser.add_argument('--model_dir', type=str, default='models',
@@ -33,6 +35,8 @@ def main():
     parser.add_argument('--test_sampling', type=str, default='uniform',
                         choices=['uniform', 'random', 'sliding'],
                         help='Frame sampling method for testing')
+    parser.add_argument('--loss_weight', type=float, default=0.3,
+                        help='Weight for loss in model selection (0-1). Higher values prioritize minimizing loss.')
     args = parser.parse_args()
 
     # Setup
@@ -53,15 +57,20 @@ def main():
     log_file = os.path.join(run_dir, 'training.log')
     setup_logging(log_file)
     # Update config with command line arguments
+    # Determine test directory (use data_dir if test_dir is not specified)
+    test_dir = args.test_dir if args.test_dir else args.data_dir
+    
     config = DEFAULT_CONFIG.copy()
     config.update({
         'data_dir': args.data_dir,
+        'test_dir': test_dir,
         'log_dir': run_dir,
         'model_dir': args.model_dir,
         'viz_dir': viz_dir,
         'train_sampling': args.train_sampling,
         'val_sampling': args.val_sampling,
-        'test_sampling': args.test_sampling
+        'test_sampling': args.test_sampling,
+        'loss_weight': args.loss_weight
     })
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -79,10 +88,13 @@ def main():
         'val': VideoDataset(root_dir=args.data_dir, split='val',
                            sequence_length=config['sequence_length'],
                            transform=transform, sampling_method=args.val_sampling),
-        'test': VideoDataset(root_dir=args.data_dir, split='test',
+        'test': VideoDataset(root_dir=config['test_dir'], split='test',
                             sequence_length=config['sequence_length'],
                             transform=transform, sampling_method=args.test_sampling)
     }
+    
+    logging.info(f"Using training/validation data from: {args.data_dir}")
+    logging.info(f"Using test data from: {config['test_dir']}")
     
     # Visualize sampling for each split
     for split, dataset in datasets.items():
@@ -110,8 +122,8 @@ def main():
                           shuffle=False, num_workers=4, pin_memory=True)
     }
     
-    # Model initialization and training
-    model = VideoResNetLSTM(
+    # Model initialization and training - Updated to use VideoResNet50LSTM
+    model = VideoResNet50LSTM(
         hidden_size=config['hidden_size'],
         num_layers=config['num_layers'],
         dropout=config['dropout']
@@ -162,9 +174,11 @@ if __name__ == "__main__":
 """
 python3 resnet50video-lstm/main.py \
     --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
+    --test_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset \
     --log_dir logs \
-    --model_dir resnet-models \
+    --model_dir resnet2d-lstm-models \
     --train_sampling random \
     --val_sampling random \
-    --test_sampling random
+    --test_sampling random \
+    --loss_weight 0.3
 """

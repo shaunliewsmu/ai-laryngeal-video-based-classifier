@@ -12,7 +12,7 @@ from pathlib import Path
 import json
 from datetime import datetime
 
-from src.models.model import VideoResNetLSTM
+from src.models.model import VideoResNet50LSTM 
 from src.data_config.sampling import VideoSampling
 from src.utils.logging_utils import setup_logging, create_directories
 from src.config.config import DEFAULT_CONFIG
@@ -24,8 +24,8 @@ class VideoInference:
         self.sampling_method = sampling_method
         self.sampler = VideoSampling.get_sampler(sampling_method)
         
-        # Initialize model
-        self.model = VideoResNetLSTM(
+        # Initialize model - Updated to use VideoResNet50LSTM
+        self.model = VideoResNet50LSTM(
             hidden_size=DEFAULT_CONFIG['hidden_size'],
             num_layers=DEFAULT_CONFIG['num_layers'],
             dropout=DEFAULT_CONFIG['dropout']

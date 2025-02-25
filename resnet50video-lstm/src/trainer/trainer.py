@@ -35,10 +35,18 @@ def train_model(model, train_loader, val_loader, device, config):
         optimizer, mode='max', factor=0.5, patience=5
     )
     
+    # Get loss weight from config or use default
+    loss_weight = config.get('loss_weight', 0.3)  # Default to 30% loss weight
+    auroc_weight = 1.0 - loss_weight  # Remaining weight for AUROC
+    logging.info(f"Model selection weights - Loss: {loss_weight:.2f}, AUROC: {auroc_weight:.2f}")
+    
     # Early stopping parameters
     patience = 10
     no_improve_epochs = 0
+    best_composite_score = -float('inf')  # Start with worst possible score
+    best_val_loss = float('inf')
     best_auroc = 0
+    
     # Update model save path
     best_model_path = os.path.join(config['model_dir'], f'model_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pth')
     
@@ -130,7 +138,7 @@ def train_model(model, train_loader, val_loader, device, config):
             f'Validation Confusion Matrix - Epoch {epoch+1}'
         )
         
-        # Update learning rate scheduler
+        # Update learning rate scheduler - still use AUROC for this
         scheduler.step(val_metrics['auroc'])
         current_lr = optimizer.param_groups[0]['lr']
         logging.info(f'Current learning rate: {current_lr}')
@@ -158,12 +166,24 @@ def train_model(model, train_loader, val_loader, device, config):
             'learning_rate': current_lr
         })
         
+        # Normalize the loss to a [0,1] scale for composite scoring
+        # This is necessary because loss and AUROC are on different scales
+        # We use the best loss seen so far as a reference point
+        best_val_loss = min(best_val_loss, avg_val_loss)
+        normalized_loss = best_val_loss / max(avg_val_loss, 1e-10)  # Avoid division by zero
+        
+        # Compute composite score
+        # Higher is better for both components (normalized_loss and AUROC)
+        composite_score = (loss_weight * normalized_loss) + (auroc_weight * val_metrics['auroc'])
+        
         # Model checkpointing and early stopping
-        if val_metrics['auroc'] > best_auroc:
-            best_auroc = val_metrics['auroc']
+        if composite_score > best_composite_score:
+            best_composite_score = composite_score
+            best_auroc = val_metrics['auroc']  # Keep track of best AUROC for logging
             no_improve_epochs = 0
             torch.save(model.state_dict(), best_model_path)
-            logging.info(f'Saved best model with AUROC: {best_auroc:.4f}')
+            logging.info(f'Saved best model with composite score: {best_composite_score:.4f} '
+                         f'(Loss: {avg_val_loss:.4f}, AUROC: {val_metrics["auroc"]:.4f})')
         else:
             no_improve_epochs += 1
             if no_improve_epochs >= patience:
@@ -176,6 +196,7 @@ def train_model(model, train_loader, val_loader, device, config):
                     f'Accuracy: {train_metrics["accuracy"]:.4f}, F1: {train_metrics["f1"]:.4f}')
         logging.info(f'Validation - Loss: {avg_val_loss:.4f}, AUROC: {val_metrics["auroc"]:.4f}, '
                     f'Accuracy: {val_metrics["accuracy"]:.4f}, F1: {val_metrics["f1"]:.4f}')
+        logging.info(f'Composite Score: {composite_score:.4f} (best: {best_composite_score:.4f})')
         
         # Print class-wise metrics
         print_class_metrics(train_labels, train_predictions, 'Training')

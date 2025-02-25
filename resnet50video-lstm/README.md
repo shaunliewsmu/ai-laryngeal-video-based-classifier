@@ -6,7 +6,7 @@ This repository contains an implementation of a deep learning model that combine
 
 The model consists of two main components:
 
-1. **Feature Extractor**: Uses a pretrained ResNet3D-18 (initialized with Kinetics-400 weights) to extract spatial-temporal features from video frames.
+1. **Feature Extractor**: Uses a pretrained ResNet50 (initialized with ImageNet weights) to extract frame-level features.
 2. **Sequence Processor**: An LSTM network that processes the temporal sequence of features to make the final classification.
 
 Key features:
@@ -62,7 +62,8 @@ dataset/
 2. Run the training script:
 ```bash
 python resnet50video-lstm/main.py \
-    --data_dir path/to/dataset \
+    --data_dir path/to/train_and_val_dataset \
+    --test_dir path/to/test_dataset \
     --log_dir logs \
     --model_dir models \
     --train_sampling uniform \
@@ -72,12 +73,14 @@ python resnet50video-lstm/main.py \
 
 ### Training Arguments
 
-- `--data_dir`: Path to the dataset directory
+- `--data_dir`: Path to the dataset directory for training and validation data
+- `--test_dir`: Path to the separate test dataset directory (optional, uses data_dir if not specified)
 - `--log_dir`: Directory for saving logs and visualizations
 - `--model_dir`: Directory for saving model checkpoints
 - `--train_sampling`: Frame sampling method for training (uniform/random/sliding)
 - `--val_sampling`: Frame sampling method for validation
 - `--test_sampling`: Frame sampling method for testing
+- `--loss_weight`: Weight for loss in model selection (0-1). Higher values prioritize minimizing loss over maximizing AUROC (default: 0.3)
 
 ## Model Performance Tracking
 
