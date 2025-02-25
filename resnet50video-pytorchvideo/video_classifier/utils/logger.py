@@ -6,7 +6,7 @@ from pathlib import Path
 class ExperimentLogger:
     """Handles experiment logging and directory management."""
     
-    def __init__(self, base_log_dir, prefix='resnet50-training'):
+    def __init__(self, base_log_dir, prefix='resnet50-3d-training'):
         """
         Initialize experiment logger.
         

@@ -46,7 +46,7 @@ def main():
     create_directories(args.model_dir)
     # Create timestamped run directory
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    run_dir = os.path.join(args.log_dir, f'training_{timestamp}')
+    run_dir = os.path.join(args.log_dir, f'resnet50_lstm_training_{timestamp}')
     create_directories(run_dir)
     
     # Create visualization directory inside run directory
