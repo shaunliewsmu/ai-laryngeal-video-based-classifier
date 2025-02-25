@@ -3,8 +3,8 @@ import os
 import json
 from tqdm import tqdm
 from datetime import datetime
-from video_classifier.utils.visualization import TrainingVisualizer
-from video_classifier.utils.early_stopping import EarlyStopping
+from swin_video_classifier.utils.visualization import TrainingVisualizer
+from swin_video_classifier.utils.early_stopping import EarlyStopping
 
 class ModelTrainer:
     def __init__(self, model, dataloaders, criterion, optimizer, device, args, exp_logger):
@@ -183,9 +183,11 @@ class ModelTrainer:
     def _save_best_model(self, epoch, val_loss, val_acc, best_model_weights):
         """Save the best model checkpoint."""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        # Create model directory if it doesn't exist
+        
+         # Create model directory if it doesn't exist
         os.makedirs(self.args.model_dir, exist_ok=True)
-        model_path = os.path.join(self.args.model_dir, f'{timestamp}_resnet50_best_model.pth')
+        
+        model_path = os.path.join(self.args.model_dir, f'{timestamp}_swin3d-{self.args.model_size}_best_model.pth')
         torch.save({
             'epoch': epoch,
             'model_state_dict': best_model_weights,
