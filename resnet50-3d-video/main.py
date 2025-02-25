@@ -122,7 +122,7 @@ if __name__ == "__main__":
     main()
     
 """
-python3 resnet50video-pytorchvideo/main.py \
+python3 resnet50-3d-video/main.py \
 --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
 --test_data_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset \
 --log_dir logs \

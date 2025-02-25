@@ -199,7 +199,7 @@ if __name__ == "__main__":
     main()
     
 """
-python3 resnet50video-lstm/inference.py \
+python3 resnet50-2d-lstm/inference.py \
     --videos_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset/val/non_referral \
     --model_path resnet2d-lstm-models/model_20250225_112709.pth \
     --output_dir resnet_inference_results \

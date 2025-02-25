@@ -175,7 +175,7 @@ if __name__ == "__main__":
     
 """
 Example usage:
-python3 resnet50video-pytorchvideo/inference.py \
+python3 resnet50-3d-video/inference.py \
     --video_path artifacts/laryngeal_dataset_balanced:v0/dataset/val/referral/0047.mp4 \
     --model_path model/20250220_175039_resnet50_best_model.pth \
     --num_frames 32 \

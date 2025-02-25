@@ -61,7 +61,7 @@ dataset/
 
 2. Run the training script:
 ```bash
-python resnet50video-lstm/main.py \
+python3 resnet50-2d-lstm/main.py \
     --data_dir path/to/train_and_val_dataset \
     --test_dir path/to/test_dataset \
     --log_dir logs \
