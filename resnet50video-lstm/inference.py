@@ -13,7 +13,14 @@ import json
 from datetime import datetime
 
 from src.models.model import VideoResNet50LSTM 
-from src.data_config.sampling import VideoSampling
+from pytorchvideo.data import make_clip_sampler
+from pytorchvideo.data.encoded_video import EncodedVideo
+from pytorchvideo.transforms import (
+    ApplyTransformToKey,
+    UniformTemporalSubsample,
+    ShortSideScale,
+    Normalize,
+)
 from src.utils.logging_utils import setup_logging, create_directories
 from src.config.config import DEFAULT_CONFIG
 
@@ -22,9 +29,16 @@ class VideoInference:
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         self.sequence_length = sequence_length
         self.sampling_method = sampling_method
-        self.sampler = VideoSampling.get_sampler(sampling_method)
+        self.fps = 30  # Default FPS
         
-        # Initialize model - Updated to use VideoResNet50LSTM
+        # Setup clip sampler
+        self.clip_duration = float(sequence_length) / self.fps
+        self.clip_sampler = make_clip_sampler(
+            sampling_method,
+            self.clip_duration
+        )
+        
+        # Initialize model
         self.model = VideoResNet50LSTM(
             hidden_size=DEFAULT_CONFIG['hidden_size'],
             num_layers=DEFAULT_CONFIG['num_layers'],
@@ -36,44 +50,38 @@ class VideoInference:
         self.model.eval()
         
         # Setup transform
-        self.transform = transforms.Compose([
-            transforms.Lambda(lambda x: (x - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]),
-        ])
-    
-    def load_video(self, video_path):
-        frames = []
-        cap = cv2.VideoCapture(video_path)
-        
-        if not cap.isOpened():
-            raise ValueError(f"Error opening video file: {video_path}")
-        
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        indices = self.sampler(total_frames, self.sequence_length)
-        
-        for frame_idx in indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
-            if ret:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = cv2.resize(frame, (224, 224))
-                frames.append(frame)
-            else:
-                frames.append(np.zeros((224, 224, 3), dtype=np.uint8))
-        
-        cap.release()
-        frames = np.stack(frames, axis=0)
-        frames = frames.astype(np.float32) / 255.0
-        
-        if self.transform:
-            frames = self.transform(frames)
-        
-        frames = torch.FloatTensor(frames).permute(3, 0, 1, 2)
-        return frames
+        self.transform = ApplyTransformToKey(
+            key="video",
+            transform=transforms.Compose([
+                UniformTemporalSubsample(self.sequence_length),
+                ShortSideScale(256),
+                transforms.CenterCrop(224),
+                Normalize((0.45, 0.45, 0.45), (0.225, 0.225, 0.225))
+            ]),
+        )
     
     def predict_video(self, video_path):
         try:
-            frames = self.load_video(video_path)
-            frames = frames.unsqueeze(0).to(self.device)
+            # Use PyTorchVideo EncodedVideo to load the video
+            video = EncodedVideo.from_path(video_path)
+            duration = video.duration or 10.0
+            
+            # Sample a clip
+            clip_start_sec = 0
+            clip_info = self.clip_sampler(clip_start_sec, duration, None)
+            
+            if clip_info is None:
+                raise ValueError(f"Could not sample clip from video: {video_path}")
+            
+            # Get clip data
+            video_data = video.get_clip(
+                clip_info.clip_start_sec,
+                clip_info.clip_end_sec
+            )
+            
+            # Apply transforms
+            video_data = self.transform(video_data)
+            frames = video_data["video"].unsqueeze(0).to(self.device)
             
             with torch.no_grad():
                 outputs = self.model(frames)
@@ -193,7 +201,7 @@ if __name__ == "__main__":
 """
 python3 resnet50video-lstm/inference.py \
     --videos_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset/val/non_referral \
-    --model_path resnet-models/best_model.pth \
+    --model_path resnet2d-lstm-models/model_20250225_112709.pth \
     --output_dir resnet_inference_results \
     --sampling_method uniform \
     --sequence_length 32

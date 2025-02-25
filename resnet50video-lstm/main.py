@@ -10,7 +10,8 @@ import numpy as np
 from datetime import datetime
 from src.config.config import SEED, DEFAULT_CONFIG
 from src.utils.logging_utils import set_seed, create_directories, setup_logging
-from src.utils.visualization import plot_sampled_frames,plot_confusion_matrix
+from src.utils.visualization import plot_clip_visualization,plot_confusion_matrix
+from pytorchvideo.data.encoded_video import EncodedVideo
 from src.data_config.dataset import VideoDataset
 from src.models.model import VideoResNet50LSTM
 from src.trainer.trainer import train_model
@@ -76,22 +77,30 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Using device: {device}')
     
-    # Data loading
-    transform = transforms.Compose([
-        transforms.Lambda(lambda x: (x - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]),
-    ])
-    
+    # Data loading   
     datasets = {
-        'train': VideoDataset(root_dir=args.data_dir, split='train', 
-                             sequence_length=config['sequence_length'],
-                             transform=transform, sampling_method=args.train_sampling),
-        'val': VideoDataset(root_dir=args.data_dir, split='val',
-                           sequence_length=config['sequence_length'],
-                           transform=transform, sampling_method=args.val_sampling),
-        'test': VideoDataset(root_dir=config['test_dir'], split='test',
-                            sequence_length=config['sequence_length'],
-                            transform=transform, sampling_method=args.test_sampling)
-    }
+    'train': VideoDataset(
+        root_dir=args.data_dir, 
+        split='train', 
+        sampling_method=args.train_sampling,
+        sequence_length=config['sequence_length'],
+        logger=logging
+    ),
+    'val': VideoDataset(
+        root_dir=args.data_dir, 
+        split='val',
+        sampling_method=args.val_sampling,
+        sequence_length=config['sequence_length'],
+        logger=logging
+    ),
+    'test': VideoDataset(
+        root_dir=config['test_dir'], 
+        split='test',
+        sampling_method=args.test_sampling,
+        sequence_length=config['sequence_length'],
+        logger=logging
+    )
+}
     
     logging.info(f"Using training/validation data from: {args.data_dir}")
     logging.info(f"Using test data from: {config['test_dir']}")
@@ -100,16 +109,42 @@ def main():
     for split, dataset in datasets.items():
         if len(dataset.video_paths) > 0:
             example_video = dataset.video_paths[0]
-            cap = cv2.VideoCapture(example_video)
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            cap.release()
             
-            sampled_indices = dataset.sampler(total_frames, config['sequence_length'])
-            plot_sampled_frames(
-                example_video,
-                sampled_indices,
-                os.path.join(viz_dir, f'sampled_frames_{split}_{args.train_sampling}.png')
-            )
+            # Get a sample clip using PyTorchVideo
+            video = EncodedVideo.from_path(example_video)
+            duration = video.duration or 10.0
+            
+            # Get clip info
+            clip_sampler = dataset.clip_sampler
+            if clip_sampler:
+                # Try multiple times for random sampler to demonstrate randomness
+                if dataset.sampling_method == 'random':
+                    clip_infos = []
+                    for _ in range(3):  # Generate 3 different random samples
+                        clip_info = clip_sampler(0, duration, None)
+                        if clip_info:
+                            clip_infos.append(clip_info)
+                            
+                    # Visualize each clip
+                    for i, clip_info in enumerate(clip_infos):
+                        plot_clip_visualization(
+                            example_video,
+                            clip_info,
+                            os.path.join(viz_dir, f'sampled_frames_{split}_{dataset.sampling_method}_{i+1}.png'),
+                            f'{split} frames - {dataset.sampling_method} sampling (sample {i+1})',
+                            fps=dataset.fps
+                        )
+                else:
+                    # For non-random methods, just visualize one clip
+                    clip_info = clip_sampler(0, duration, None)
+                    if clip_info:
+                        plot_clip_visualization(
+                            example_video,
+                            clip_info,
+                            os.path.join(viz_dir, f'sampled_frames_{split}_{dataset.sampling_method}.png'),
+                            f'{split} frames - {dataset.sampling_method} sampling',
+                            fps=dataset.fps
+                        )
     
     dataloaders = {
         'train': DataLoader(datasets['train'], batch_size=config['batch_size'],

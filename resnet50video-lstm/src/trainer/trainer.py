@@ -18,10 +18,10 @@ def train_model(model, train_loader, val_loader, device, config):
     )
     
     # Calculate class weights
-    all_labels = [label for _, label in train_loader.dataset]
-    num_samples = len(all_labels)
-    num_class_0 = sum([1 for label in all_labels if label == 0])
-    num_class_1 = num_samples - num_class_0
+    train_dataset = train_loader.dataset
+    num_class_1 = sum(train_dataset.labels)
+    num_class_0 = len(train_dataset.labels) - num_class_1
+    num_samples = len(train_dataset.labels)
     
     # Calculate positive weight for BCEWithLogitsLoss
     pos_weight = torch.tensor([num_samples/(2*num_class_1) / (num_samples/(2*num_class_0))]).to(device)
