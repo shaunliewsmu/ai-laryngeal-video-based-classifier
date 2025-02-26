@@ -1,6 +1,6 @@
 # Video Swin Transformer for Laryngeal Cancer Screening
 
-This repository implements a 3D Swin Transformer model for the classification of laryngeal endoscopy videos into "referral" and "non-referral" categories. The model is designed to assist in triaging patients for laryngeal cancer screening, particularly in low-resource settings.
+This repository implements a [3D Swin Transformer](https://pytorch.org/vision/main/models/video_swin_transformer.html) model for the classification of laryngeal endoscopy videos into "referral" and "non-referral" categories. The model is designed to assist in triaging patients for laryngeal cancer screening, particularly in low-resource settings.
 
 ## Overview
 
