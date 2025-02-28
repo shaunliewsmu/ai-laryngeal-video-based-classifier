@@ -320,7 +320,7 @@ if __name__ == "__main__":
 Example usage:
 python3 timesformer/inference.py \
   --video_path artifacts/laryngeal_dataset_iqm_filtered:v0/dataset/val/referral/0088_processed.mp4 \
-  --model_path timesformer-models/20250228_123221_timesformer-classifier_best_model.pth \
+  --model_path timesformer-models/20250228_164256_timesformer-classifier_best_model.pth \
   --num_frames 32 \
   --fps 8 \
   --sampling_method uniform \

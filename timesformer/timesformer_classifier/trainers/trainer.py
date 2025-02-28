@@ -62,63 +62,73 @@ class ModelTrainer:
         # Get video frames and labels
         video_frames = batch['pixel_values']
         labels = batch['labels'].to(self.device)  # Move labels to correct device
+        batch_size = labels.size(0)
         
         try:
-            # Debug the shape and type of input
-            if len(video_frames) > 0:
-                first_frame = video_frames[0]
-                self.logger.debug(f"Input frame shape: {first_frame.shape}, type: {type(first_frame)}, dtype: {first_frame.dtype if hasattr(first_frame, 'dtype') else 'N/A'}")
+            # Process each video independently
+            all_processed_inputs = []
             
-            # Process frames to ensure consistent format
-            processed_frames = []
-            for frames in video_frames:
+            for i in range(batch_size):
+                # Get frames for this item in the batch
+                frames = video_frames[i]
+                
                 # Convert to numpy array if not already
                 if isinstance(frames, torch.Tensor):
                     frames = frames.cpu().numpy()
                 
-                # Ensure the correct shape for each frame
+                # Ensure frames have correct shape (T, H, W, C) and are uint8
                 if isinstance(frames, np.ndarray):
+                    # Check if we have extra dimensions that need to be removed
+                    if frames.shape == (1, 1, 224, 3) or len(frames.shape) > 4:
+                        frames = frames.squeeze()  # Remove extra dimensions
+                    
                     # Ensure it's uint8 for consistent processing
                     frames = frames.astype(np.uint8)
-                    processed_frames.append(frames)
+                    
+                    # Process this video with image processor
+                    try:
+                        # Process video frames - each video should be processed independently
+                        inputs = self.image_processor(
+                            images=list(frames),  # Convert to list of frames
+                            return_tensors="pt",
+                            do_resize=True, 
+                            size={"height": 224, "width": 224},
+                            do_center_crop=True,
+                            crop_size={"height": 224, "width": 224}
+                        )
+                        
+                        # Move tensors to device
+                        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                        all_processed_inputs.append(inputs)
+                    except Exception as e:
+                        self.logger.error(f"Error in image processor for item {i}: {str(e)}")
+                        # Create placeholder inputs
+                        placeholder = {
+                            'pixel_values': torch.zeros((1, self.args.num_frames, 3, 224, 224), 
+                                                    dtype=torch.float32, 
+                                                    device=self.device)
+                        }
+                        all_processed_inputs.append(placeholder)
                 else:
-                    self.logger.error(f"Unsupported frame type: {type(frames)}")
+                    self.logger.error(f"Unsupported frame type for item {i}: {type(frames)}")
                     # Create placeholder
-                    processed_frames.append(np.zeros((self.args.num_frames, 224, 224, 3), dtype=np.uint8))
+                    placeholder = {
+                        'pixel_values': torch.zeros((1, self.args.num_frames, 3, 224, 224), 
+                                                dtype=torch.float32, 
+                                                device=self.device)
+                    }
+                    all_processed_inputs.append(placeholder)
             
-            # Use image processor with explicit parameters
-            try:
-                inputs = self.image_processor(
-                    images=processed_frames,
-                    return_tensors="pt",
-                    do_resize=True, 
-                    size={"height": 224, "width": 224},
-                    do_center_crop=True,
-                    crop_size={"height": 224, "width": 224}
-                )
-                
-                # Explicitly move tensors to device
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
-                
-                return inputs, labels
-                
-            except Exception as e:
-                self.logger.error(f"Error in image processor: {str(e)}")
-                # Create a minimal valid input for the model
-                batch_size = len(video_frames)
-                num_frames = self.args.num_frames
-                
-                # Create placeholder tensors directly on the correct device
-                pixel_values = torch.zeros((batch_size, num_frames, 3, 224, 224), 
-                                        dtype=torch.float32, 
-                                        device=self.device)
-                
-                return {'pixel_values': pixel_values}, labels
-                
+            # Combine all inputs into a single batch
+            combined_inputs = {}
+            for key in all_processed_inputs[0].keys():
+                combined_inputs[key] = torch.cat([inputs[key] for inputs in all_processed_inputs], dim=0)
+            
+            return combined_inputs, labels
+        
         except Exception as e:
             self.logger.error(f"Error in processing batch: {str(e)}")
             # Return minimal placeholder inputs on correct device
-            batch_size = len(video_frames) if isinstance(video_frames, list) else 1
             placeholder = {
                 'pixel_values': torch.zeros((batch_size, self.args.num_frames, 3, 224, 224), 
                                             dtype=torch.float32, 

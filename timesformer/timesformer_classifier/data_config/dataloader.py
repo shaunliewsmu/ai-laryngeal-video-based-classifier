@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from .dataset import VideoDataset
+import numpy as np
 
 def video_collate_fn(batch):
     """Custom collate function for video batches."""
@@ -9,11 +10,19 @@ def video_collate_fn(batch):
     
     for sample in batch:
         if 'pixel_values' in sample and sample['pixel_values'] is not None:
-            # Ensure pixel_values is a numpy array
+            # Ensure pixel_values is a numpy array with correct shape
             if isinstance(sample['pixel_values'], torch.Tensor):
-                pixel_values.append(sample['pixel_values'].cpu().numpy())
+                frames = sample['pixel_values'].cpu().numpy()
             else:
-                pixel_values.append(sample['pixel_values'])
+                frames = sample['pixel_values']
+            
+            # Make sure frames have the correct shape (T, H, W, C)
+            if len(frames.shape) == 4 and frames.shape[-1] == 3:
+                pixel_values.append(frames)
+            else:
+                # Log error and create placeholder
+                print(f"Warning: Unexpected frame shape in collate_fn: {frames.shape}")
+                pixel_values.append(np.zeros((32, 224, 224, 3), dtype=np.uint8))
                 
         if 'labels' in sample and sample['labels'] is not None:
             labels.append(sample['labels'])
@@ -25,7 +34,7 @@ def video_collate_fn(batch):
         labels = torch.zeros(len(batch), dtype=torch.long)
     
     return {
-        'pixel_values': pixel_values,  # Keep as list
+        'pixel_values': pixel_values,  # Keep as list of numpy arrays
         'labels': labels
     }
     

@@ -137,43 +137,27 @@ class VideoDataset(Dataset):
             # Extract the clip
             clip_frames = self._extract_clip(container, clip_info)
             
-            # Prepare sample - ensure clip_frames is a numpy array with correct shape and type
-            # Convert to numpy array and ensure correct data type and shape
+            # Ensure clip_frames is a numpy array with correct shape
             clip_frames = np.array(clip_frames, dtype=np.uint8)
             
-            # Debug information to understand the frame format
-            first_frame = clip_frames[0] if len(clip_frames) > 0 else None
-            if first_frame is not None:
-                self.logger.debug(f"Frame shape: {first_frame.shape}, dtype: {first_frame.dtype}")
+            # Debug information
+            if len(clip_frames) > 0:
+                self.logger.debug(f"Frame shape: {clip_frames.shape}, dtype: {clip_frames.dtype}")
             
-            # Ensure frames are in the correct shape
+            # Ensure we have enough frames
             if clip_frames.shape[0] < self.num_frames:
                 # Duplicate last frame if needed
                 missing = self.num_frames - clip_frames.shape[0]
-                last_frame = clip_frames[-1:].repeat(missing, axis=0)
-                clip_frames = np.concatenate([clip_frames, last_frame], axis=0)
+                if clip_frames.shape[0] > 0:
+                    last_frame = np.repeat(clip_frames[-1:], missing, axis=0)
+                    clip_frames = np.concatenate([clip_frames, last_frame], axis=0)
+                else:
+                    # If we have no frames, create placeholder frames
+                    clip_frames = np.zeros((self.num_frames, 224, 224, 3), dtype=np.uint8)
             
-            # Ensure each frame has the expected shape
-            resized_frames = []
-            for frame in clip_frames:
-                # Make sure each frame is correctly shaped
-                if len(frame.shape) == 2:  # Grayscale
-                    frame = np.stack([frame, frame, frame], axis=-1)
-                elif frame.shape[-1] == 1:  # Single channel
-                    frame = np.concatenate([frame, frame, frame], axis=-1)
-                elif frame.shape[-1] == 4:  # RGBA
-                    frame = frame[:, :, :3]
-                
-                # Ensure RGB
-                frame = frame[:, :, :3]
-                
-                # Ensure correct dimensions (H, W, 3)
-                if frame.shape[0] == 3 and frame.shape[2] != 3:
-                    frame = np.transpose(frame, (1, 2, 0))
-                    
-                resized_frames.append(frame)
-            
-            clip_frames = np.stack(resized_frames, axis=0)
+            # Make sure clip_frames has the correct shape and doesn't have extra dimensions
+            if len(clip_frames.shape) == 5:  # Extra batch dimension
+                clip_frames = clip_frames.squeeze(0)
             
             sample = {
                 'pixel_values': clip_frames,
