@@ -1,10 +1,10 @@
-# ViViT Transformer for Laryngeal Cancer Screening
+# TimeSformer Transformer for Laryngeal Cancer Screening
 
-This repository implements a [Vision Video Transformer (ViViT)](https://huggingface.co/docs/transformers/model_doc/vivit) model for the classification of laryngeal endoscopy videos into "referral" and "non-referral" categories. The model is designed to assist in triaging patients for laryngeal cancer screening, particularly in low-resource settings.
+This repository implements a [TimeSformer (Time-Space Transformer)](https://huggingface.co/docs/transformers/model_doc/timesformer) model for the classification of laryngeal endoscopy videos into "referral" and "non-referral" categories. The model is designed to assist in triaging patients for laryngeal cancer screening, particularly in low-resource settings.
 
 ## Overview
 
-- Implements the ViViT architecture using Hugging Face Transformers
+- Implements the TimeSformer architecture using Hugging Face Transformers
 - Supports different frame sampling methods using PyTorchVideo samplers
 - Includes training, evaluation, and inference pipelines
 - Provides visualization tools for model performance analysis
@@ -30,10 +30,10 @@ pip install torch torchvision pytorchvideo transformers av scikit-learn matplotl
 ## Project Structure
 
 ```
-vivittransformer/
+timesformer_transformer/
 ├── main.py                          # Main training script
 ├── inference.py                     # Inference script for running on single videos
-├── vivit_classifier/
+├── timesformer_classifier/
 │   ├── data_config/                 # Dataset and dataloader configuration
 │   ├── evaluators/                  # Model evaluation utilities
 │   ├── models/                      # Model architecture definitions
@@ -48,11 +48,11 @@ vivittransformer/
 To train a new model, use the `main.py` script:
 
 ```bash
-python vivittransformer/main.py \
+python timesformer_transformer/main.py \
   --data_dir artifacts/laryngeal_dataset_iqm_filtered:v0 \
   --test_data_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset \
   --log_dir logs \
-  --model_dir vivit-models \
+  --model_dir timesformer-models \
   --train_sampling random \
   --val_sampling uniform \
   --test_sampling uniform \
@@ -91,11 +91,6 @@ This implementation uses PyTorchVideo's clip samplers to ensure consistent sampl
 2. **Random**: A random continuous clip of specified duration is extracted from the video
 3. **Sliding**: A sliding window approach with specified stride is used to extract multiple overlapping clips
 
-The sampling method controls how frames are selected from videos, which can affect model performance. For example:
-- 'uniform' is best for capturing the overall video content
-- 'random' provides more variability during training
-- 'sliding' with a small stride can provide higher temporal resolution for detecting fast movements
-
 The dataset directory should follow this structure:
 
 ```bash
@@ -126,9 +121,9 @@ dataset/
 To run inference on a single video using a trained model:
 
 ```bash
-python vivittransformer/inference.py \
+python timesformer_transformer/inference.py \
   --video_path artifacts/laryngeal_dataset_iqm_filtered:v0/dataset/val/referral/0088_processed.mp4 \
-  --model_path vivit-models/20250227_123456_vivit-classifier_best_model.pth \
+  --model_path timesformer-models/20250227_123456_timesformer-classifier_best_model.pth \
   --num_frames 32 \
   --fps 8 \
   --sampling_method uniform \
@@ -136,48 +131,13 @@ python vivittransformer/inference.py \
   --save_viz
 ```
 
-#### Important Parameters:
-
-- `--video_path`: Path to the input video file
-- `--model_path`: Path to the trained model checkpoint
-- `--num_frames`: Number of frames to sample (should match training configuration)
-- `--fps`: Frames per second for clip sampling
-- `--sampling_method`: Method to sample frames from video ('uniform', 'random', 'sliding')
-- `--stride`: Stride fraction for sliding window sampling
-- `--save_viz`: Flag to save visualization of sampled frames
-
-## Output and Visualizations
-
-During training, the following outputs are generated:
-
-- Training logs (saved to the specified log directory)
-- Training history plots (loss and accuracy)
-- Confusion matrix visualization
-- ROC curve visualization
-- Best model checkpoint
-
-During inference, the model produces:
-
-- Classification result (referral or non-referral)
-- Confidence score for the prediction
-- JSON file with inference results
-- Optional visualization of sampled frames
-
-## Example Results
-
-After successful inference, you'll see output like:
-
-```bash
-Results:
-Class: referral
-Confidence: 0.9245
-```
-
-The detailed results are saved in a JSON file in the logs directory.
-
 ## Model Architecture
 
-The ViViT (Video Vision Transformer) model extends the Vision Transformer (ViT) architecture for video understanding. It applies self-attention mechanisms to both spatial and temporal dimensions of the input video, allowing it to model complex relationships between frames. The model can process sequences of frames and capture motion patterns that are essential for accurate video classification.
+TimeSformer (Time-Space Transformer) is a video understanding model that divides self-attention into two operations:
+1. Spatial attention: applied to frames independently
+2. Temporal attention: applied across frames
+
+This division of attention makes the model computationally efficient while still being able to model complex spatio-temporal relationships within video data. The model adapts the Vision Transformer (ViT) architecture to video understanding by enabling spatiotemporal feature learning directly from frame-level patches.
 
 ## Performance Evaluation
 
@@ -187,10 +147,14 @@ The model is evaluated using several metrics:
 - AUROC: Area under the Receiver Operating Characteristic curve
 - Confusion Matrix: Detailed breakdown of predictions by class
 
-## Notes
+## Troubleshooting
 
-- For best performance, use a GPU with sufficient memory
-- The model performance may vary depending on the sampling method used
-- Videos with fewer frames than required will be skipped or have frames sampled with replacement
-- The stride parameter is used only for the 'sliding' sampling method
-- Using the same sampling method during inference as used during training generally yields better results
+If you encounter CUDA out-of-memory errors:
+- Reduce the batch size (`--batch_size`)
+- Reduce the number of frames (`--num_frames`)
+- Set `--num_workers` to 0
+
+For data format errors, ensure your videos:
+- Have sufficient frames (at least equal to `num_frames`)
+- Are in a standard format (MP4 with H.264 encoding is recommended)
+- Have consistent frame dimensions (resize if necessary)
