@@ -10,8 +10,7 @@ import numpy as np
 from datetime import datetime
 from src.config.config import SEED, DEFAULT_CONFIG
 from src.utils.logging_utils import set_seed, create_directories, setup_logging
-from src.utils.visualization import plot_clip_visualization,plot_confusion_matrix
-from pytorchvideo.data.encoded_video import EncodedVideo
+from src.utils.visualization import visualize_sampling,plot_confusion_matrix
 from src.data_config.dataset import VideoDataset
 from src.models.model import VideoResNet50LSTM
 from src.trainer.trainer import train_model
@@ -28,18 +27,20 @@ def main():
     parser.add_argument('--model_dir', type=str, default='models',
                         help='Path to model directory')
     parser.add_argument('--train_sampling', type=str, default='uniform',
-                        choices=['uniform', 'random', 'sliding'],
+                        choices=['uniform', 'random', 'random_window'],
                         help='Frame sampling method for training')
     parser.add_argument('--val_sampling', type=str, default='uniform',
-                        choices=['uniform', 'random', 'sliding'],
+                        choices=['uniform', 'random', 'random_window'],
                         help='Frame sampling method for validation')
     parser.add_argument('--test_sampling', type=str, default='uniform',
-                        choices=['uniform', 'random', 'sliding'],
+                        choices=['uniform', 'random', 'random_window'],
                         help='Frame sampling method for testing')
     parser.add_argument('--loss_weight', type=float, default=0.3,
                         help='Weight for loss in model selection (0-1). Higher values prioritize minimizing loss.')
     args = parser.parse_args()
 
+    torch.cuda.empty_cache()  # Clear GPU cache
+    torch.backends.cudnn.benchmark = True  # Enable cuDNN auto-tuner
     # Setup
     set_seed(SEED)
     create_directories(args.log_dir)
@@ -74,33 +75,33 @@ def main():
         'loss_weight': args.loss_weight
     })
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Using device: {device}')
     
     # Data loading   
     datasets = {
-    'train': VideoDataset(
-        root_dir=args.data_dir, 
-        split='train', 
-        sampling_method=args.train_sampling,
-        sequence_length=config['sequence_length'],
-        logger=logging
-    ),
-    'val': VideoDataset(
-        root_dir=args.data_dir, 
-        split='val',
-        sampling_method=args.val_sampling,
-        sequence_length=config['sequence_length'],
-        logger=logging
-    ),
-    'test': VideoDataset(
-        root_dir=config['test_dir'], 
-        split='test',
-        sampling_method=args.test_sampling,
-        sequence_length=config['sequence_length'],
-        logger=logging
-    )
-}
+        'train': VideoDataset(
+            root_dir=args.data_dir, 
+            split='train', 
+            sampling_method=args.train_sampling,
+            sequence_length=config['sequence_length'],
+            logger=logging
+        ),
+        'val': VideoDataset(
+            root_dir=args.data_dir, 
+            split='val',
+            sampling_method=args.val_sampling,
+            sequence_length=config['sequence_length'],
+            logger=logging
+        ),
+        'test': VideoDataset(
+            root_dir=config['test_dir'], 
+            split='test',
+            sampling_method=args.test_sampling,
+            sequence_length=config['sequence_length'],
+            logger=logging
+        )
+    }
     
     logging.info(f"Using training/validation data from: {args.data_dir}")
     logging.info(f"Using test data from: {config['test_dir']}")
@@ -110,51 +111,25 @@ def main():
         if len(dataset.video_paths) > 0:
             example_video = dataset.video_paths[0]
             
-            # Get a sample clip using PyTorchVideo
-            video = EncodedVideo.from_path(example_video)
-            duration = video.duration or 10.0
-            
-            # Get clip info
-            clip_sampler = dataset.clip_sampler
-            if clip_sampler:
-                # Try multiple times for random sampler to demonstrate randomness
-                if dataset.sampling_method == 'random':
-                    clip_infos = []
-                    for _ in range(3):  # Generate 3 different random samples
-                        clip_info = clip_sampler(0, duration, None)
-                        if clip_info:
-                            clip_infos.append(clip_info)
-                            
-                    # Visualize each clip
-                    for i, clip_info in enumerate(clip_infos):
-                        plot_clip_visualization(
-                            example_video,
-                            clip_info,
-                            os.path.join(viz_dir, f'sampled_frames_{split}_{dataset.sampling_method}_{i+1}.png'),
-                            f'{split} frames - {dataset.sampling_method} sampling (sample {i+1})',
-                            fps=dataset.fps
-                        )
-                else:
-                    # For non-random methods, just visualize one clip
-                    clip_info = clip_sampler(0, duration, None)
-                    if clip_info:
-                        plot_clip_visualization(
-                            example_video,
-                            clip_info,
-                            os.path.join(viz_dir, f'sampled_frames_{split}_{dataset.sampling_method}.png'),
-                            f'{split} frames - {dataset.sampling_method} sampling',
-                            fps=dataset.fps
-                        )
+            # Visualize frame sampling
+            visualize_sampling(
+                example_video,
+                dataset.sampling_method,
+                config['sequence_length'],
+                os.path.join(viz_dir, f'sampled_frames_{split}_{dataset.sampling_method}.png'),
+                split
+            )
+
     
     dataloaders = {
         'train': DataLoader(datasets['train'], batch_size=config['batch_size'],
-                           shuffle=True, num_workers=4, pin_memory=True,
+                           shuffle=True, num_workers=2, pin_memory=True,
                            drop_last=True, persistent_workers=True),
         'val': DataLoader(datasets['val'], batch_size=config['batch_size'],
-                         shuffle=False, num_workers=4, pin_memory=True,
+                         shuffle=False, num_workers=2, pin_memory=True,
                          drop_last=True, persistent_workers=True),
         'test': DataLoader(datasets['test'], batch_size=config['batch_size'],
-                          shuffle=False, num_workers=4, pin_memory=True)
+                          shuffle=False, num_workers=2, pin_memory=True)
     }
     
     # Model initialization and training - Updated to use VideoResNet50LSTM
@@ -208,12 +183,12 @@ if __name__ == "__main__":
 
 """
 python3 resnet50-2d-lstm/main.py \
-    --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
-    --test_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset \
+    --data_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
+    --test_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
     --log_dir logs \
     --model_dir resnet50-2d-lstm-models \
     --train_sampling random \
     --val_sampling random \
     --test_sampling random \
-    --loss_weight 0.3
+    --loss_weight 0.2
 """

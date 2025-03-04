@@ -16,7 +16,7 @@ resnet_inference_results/
 swin3d-models/
 vivit-models/
 timesformer-models/
-sampling_methods_comparison.png
+custom_sampling_methods_comparison.png
 .env
 .ipynb_checkpoints
 __pycache__

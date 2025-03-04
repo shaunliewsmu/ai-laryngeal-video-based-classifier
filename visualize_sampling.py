@@ -1,24 +1,209 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from pytorchvideo.data import make_clip_sampler
-from pytorchvideo.data.encoded_video import EncodedVideo
 import torch
+import random
+import cv2
 from pathlib import Path
 
-def plot_all_sampling_methods(video_path, num_frames=32, fps=30, stride=0.5, figsize=(24, 10)):
+def get_video_properties(video_path):
     """
-    Compare different sampling methods in a single figure.
+    Get video properties using OpenCV with verification of actual frame count
+    
+    Args:
+        video_path (str): Path to the video file
+        
+    Returns:
+        tuple: (total_frames, fps, duration_sec, width, height)
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video: {video_path}")
+    
+    # Get reported frame count and fps
+    reported_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    # Verify actual frame count by seeking to the last frame
+    # This is more reliable than using CAP_PROP_FRAME_COUNT
+    # Some codecs report incorrect frame counts
+    actual_frames = 0
+    while True:
+        ret, _ = cap.read()
+        if not ret:
+            break
+        actual_frames += 1
+    
+    print(f"Reported frames: {reported_frames}, Actual frames: {actual_frames}")
+    total_frames = actual_frames
+    duration_sec = total_frames / fps
+    
+    cap.release()
+    return total_frames, fps, duration_sec, width, height
+
+def get_frame_from_video(video_path, frame_idx):
+    """
+    Extract a specific frame from a video with fallback mechanism
+    
+    Args:
+        video_path (str): Path to the video file
+        frame_idx (int): Index of the frame to extract
+        
+    Returns:
+        numpy.ndarray: The extracted frame
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video: {video_path}")
+    
+    # Try setting position by frame index
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    ret, frame = cap.read()
+    
+    # If frame reading failed, try a safer approach
+    if not ret:
+        print(f"Warning: Could not directly access frame {frame_idx}, using sequential reading")
+        cap.release()
+        cap = cv2.VideoCapture(video_path)
+        
+        # Read frames sequentially until we reach our target frame
+        current_frame = 0
+        while current_frame < frame_idx:
+            ret = cap.grab()  # Faster than cap.read() as we don't decode the frame
+            if not ret:
+                break
+            current_frame += 1
+        
+        # Now read the actual frame we want
+        ret, frame = cap.read()
+    
+    cap.release()
+    
+    if not ret:
+        # If we still can't get the frame, use the last available frame or error
+        # Reopen the video to get the last available frame
+        cap = cv2.VideoCapture(video_path)
+        last_frame = None
+        while True:
+            ret, current_frame = cap.read()
+            if not ret:
+                break
+            last_frame = current_frame
+        cap.release()
+        
+        if last_frame is not None:
+            print(f"Warning: Using last available frame instead of frame {frame_idx}")
+            frame = last_frame
+        else:
+            raise ValueError(f"Could not read any frames from the video")
+    
+    # Convert BGR to RGB
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return frame
+
+def random_sampling(total_frames, num_frames):
+    """
+    Randomly sample frames from the entire video
+    
+    Args:
+        total_frames (int): Total number of frames in the video
+        num_frames (int): Number of frames to sample
+        
+    Returns:
+        list: Indices of sampled frames
+    """
+    # Ensure num_frames doesn't exceed total_frames
+    num_frames = min(num_frames, total_frames)
+    
+    # Random sampling without replacement
+    frame_indices = sorted(random.sample(range(total_frames), num_frames))
+    return frame_indices
+
+def uniform_sampling(total_frames, num_frames):
+    """
+    Sample frames at regular intervals across the video
+    
+    Args:
+        total_frames (int): Total number of frames in the video
+        num_frames (int): Number of frames to sample
+        
+    Returns:
+        list: Indices of sampled frames
+    """
+    # Ensure num_frames doesn't exceed total_frames
+    num_frames = min(num_frames, total_frames)
+    
+    if num_frames == 1:
+        return [total_frames // 2]  # Middle frame
+    
+    # Calculate step size - use (total_frames - 1) to ensure we don't go beyond last available frame
+    step = (total_frames - 1) / (num_frames - 1)
+    
+    # Generate evenly spaced indices, making sure the last index doesn't exceed total_frames - 1
+    frame_indices = [min(int(i * step), total_frames - 1) for i in range(num_frames)]
+    return frame_indices
+
+def random_window_sampling(total_frames, num_frames):
+    """
+    Divide the video into equal windows and randomly sample one frame from each window
+    
+    Args:
+        total_frames (int): Total number of frames in the video
+        num_frames (int): Number of frames to sample
+        
+    Returns:
+        list: Indices of sampled frames
+    """
+    # Ensure num_frames doesn't exceed total_frames
+    num_frames = min(num_frames, total_frames)
+    
+    # Calculate window size
+    window_size = total_frames / num_frames
+    
+    frame_indices = []
+    for i in range(num_frames):
+        # Calculate window boundaries, ensuring we don't exceed total_frames
+        start = int(i * window_size)
+        end = min(int((i + 1) * window_size), total_frames)
+        
+        # Ensure end is at least start+1 to avoid empty windows
+        end = max(end, start + 1)
+        
+        # Randomly select a frame from this window
+        frame_idx = random.randint(start, end - 1)
+        
+        frame_indices.append(frame_idx)
+    
+    return frame_indices
+
+def visualize_sampling_methods(video_path, num_frames=8, figsize=(16, 12)):
+    """
+    Visualize different sampling methods on a video
     
     Args:
         video_path (str): Path to the video file
         num_frames (int): Number of frames to sample
-        fps (int): Frames per second
-        stride (float): Stride fraction for sliding window sampling
         figsize (tuple): Figure size for the plot
     """
-    sampling_methods = ['uniform', 'random', 'sliding']
+    # Get video properties
+    total_frames, fps, duration_sec, width, height = get_video_properties(video_path)
+    print(f"Video has {total_frames} frames, duration: {duration_sec:.2f}s, FPS: {fps}")
     
-    # Create figure and subplots
+    # Define sampling methods
+    sampling_methods = {
+        'Random Sampling': random_sampling,
+        'Uniform Sampling': uniform_sampling,
+        'Random Window Sampling': random_window_sampling
+    }
+    
+    # Generate frame indices for each method
+    sampled_indices = {}
+    for method_name, method_func in sampling_methods.items():
+        sampled_indices[method_name] = method_func(total_frames, num_frames)
+        print(f"{method_name}: {sampled_indices[method_name]}")
+    
+    # Create figure
     fig = plt.figure(figsize=figsize)
     
     # First row: sampling pattern visualization
@@ -27,99 +212,74 @@ def plot_all_sampling_methods(video_path, num_frames=32, fps=30, stride=0.5, fig
     # Second row: actual frame samples
     frame_axes = [plt.subplot(2, 3, i+4) for i in range(3)]
     
-    # Load video
-    video = EncodedVideo.from_path(video_path)
-    duration = float(video.duration)
-    clip_duration = float(num_frames) / float(fps)
-    
-    # Plot for each sampling method
-    for idx, method in enumerate(sampling_methods):
-        # Create clip sampler
-        if method == 'sliding':
-            stride_time = float(clip_duration * stride)
-            clip_sampler = make_clip_sampler('uniform', clip_duration, stride_time)
-        else:
-            clip_sampler = make_clip_sampler(method, clip_duration)
-        
-        # Get all clips
-        clip_start_sec = 0.0
-        clips = []
-        
-        while True:
-            clip_info = clip_sampler(clip_start_sec, duration, None)
-            if clip_info is None:
-                break
-                
-            start_sec = float(clip_info.clip_start_sec)
-            end_sec = float(clip_info.clip_end_sec)
-            clips.append((start_sec, end_sec))
-            
-            clip_start_sec = end_sec
-            
-            if clip_info.is_last_clip:
-                break
-        
-        # Plot sampling pattern
+    # Visualize sampling patterns
+    for idx, (method_name, indices) in enumerate(sampled_indices.items()):
         ax = pattern_axes[idx]
         
         # Plot timeline
-        ax.plot([0, duration], [0, 0], 'k-', linewidth=2)
+        ax.plot([0, total_frames], [0, 0], 'k-', linewidth=2)
         ax.plot([0, 0], [-0.2, 0.2], 'k-', linewidth=2)
-        ax.plot([duration, duration], [-0.2, 0.2], 'k-', linewidth=2)
+        ax.plot([total_frames, total_frames], [-0.2, 0.2], 'k-', linewidth=2)
         
-        # Plot clips with different colors
-        colors = plt.cm.rainbow(np.linspace(0, 1, len(clips)))
-        for i, ((start, end), color) in enumerate(zip(clips, colors)):
-            # Plot clip region
-            ax.axvspan(start, end, alpha=0.3, color=color)
-            ax.plot([start, start], [-0.2, 0.2], '--', color=color)
-            ax.plot([end, end], [-0.2, 0.2], '--', color=color)
-            ax.text((start + end)/2, 0.1, f'Clip {i+1}', 
-                   horizontalalignment='center', color=color)
+        # Mark windows for Random Window Sampling method
+        if method_name == 'Random Window Sampling':
+            window_size = total_frames / num_frames
+            for i in range(num_frames):
+                start = int(i * window_size)
+                end = int((i + 1) * window_size) if i < num_frames - 1 else total_frames
+                ax.axvspan(start, end, alpha=0.1, color='gray')
+                ax.plot([start, start], [-0.2, 0.2], 'k--', alpha=0.5)
+        
+        # Mark sampled frames
+        for i, frame_idx in enumerate(indices):
+            color = plt.cm.rainbow(i / len(indices))
+            ax.plot([frame_idx, frame_idx], [-0.3, 0.3], '-', color=color, linewidth=2)
+            ax.plot(frame_idx, 0, 'o', color=color, markersize=8)
+            ax.text(frame_idx, 0.1, f'{frame_idx}', 
+                   horizontalalignment='center', color=color, fontsize=9)
         
         # Customize plot
-        title = f'{method.title()} Sampling'
-        if method == 'sliding':
-            title += f'\nOverlap: {(1-stride)*100:.0f}%'
-        ax.set_title(title)
-        ax.set_xlabel('Time (seconds)')
+        ax.set_title(f'{method_name}\n{len(indices)} frames')
+        ax.set_xlabel('Frame Index')
+        ax.set_xlim(-total_frames*0.05, total_frames*1.05)
         ax.set_ylim(-0.5, 0.5)
-        ax.grid(True, alpha=0.3)
         ax.set_yticks([])
         
-        # Plot sample frames from first clip
+        # Also display time for some equally spaced frames
+        time_marks = 5
+        for i in range(time_marks + 1):
+            frame = int(i * total_frames / time_marks)
+            time = frame / fps
+            ax.text(frame, -0.2, f'{time:.1f}s', 
+                   horizontalalignment='center', color='black', fontsize=8)
+        
+        # Display the sampled frames
         try:
-            # Extract first clip
-            video_data = video.get_clip(clips[0][0], clips[0][1])
-            
-            # Get frames and normalize
-            frames = video_data["video"].permute(1, 2, 3, 0).numpy()  # T, H, W, C
-            frames = frames.astype(np.float32) / 255.0
-            
-            # Select 8 evenly spaced frames
-            num_sample_frames = 8
-            frame_indices = np.linspace(0, len(frames)-1, num_sample_frames, dtype=int)
-            selected_frames = frames[frame_indices]
-            
-            # Create sub-subplots for frames
             ax = frame_axes[idx]
-            for i, frame in enumerate(selected_frames):
-                if i == 0:
-                    # For first frame, create a new axis that takes up 1/4 of the space
-                    sub_ax = ax.inset_axes([i/num_sample_frames, 0, 1/num_sample_frames, 1])
-                else:
-                    # For subsequent frames, create axes next to the previous one
-                    sub_ax = ax.inset_axes([i/num_sample_frames, 0, 1/num_sample_frames, 1])
+            
+            # Create a grid for the frames
+            cols = min(4, len(indices))
+            rows = (len(indices) + cols - 1) // cols
+            
+            for i, frame_idx in enumerate(indices):
+                frame = get_frame_from_video(video_path, frame_idx)
                 
+                # Calculate position in grid
+                row, col = i // cols, i % cols
+                
+                # Create subplot
+                sub_ax = ax.inset_axes([col/cols, 1-(row+1)/rows, 1/cols, 1/rows])
+                
+                # Display frame
                 sub_ax.imshow(frame)
                 sub_ax.axis('off')
-                sub_ax.set_title(f'Frame {frame_indices[i]}')
+                sub_ax.set_title(f'Frame {frame_idx}\n({frame_idx/fps:.2f}s)', fontsize=9)
             
-            ax.set_title(f'Sample Frames from Clip 1\n({clips[0][0]:.1f}s - {clips[0][1]:.1f}s)')
+            ax.set_title(f'Frames sampled using {method_name}')
             ax.axis('off')
             
         except Exception as e:
-            print(f"Error plotting frames for {method} sampling: {str(e)}")
+            print(f"Error plotting frames for {method_name}: {str(e)}")
     
     # Adjust layout
     plt.tight_layout()
@@ -127,13 +287,19 @@ def plot_all_sampling_methods(video_path, num_frames=32, fps=30, stride=0.5, fig
     return fig
 
 if __name__ == "__main__":
-    # Replace with your video path
+    # Use the same path as in your original script
     video_path = "artifacts/laryngeal_dataset_balanced:v0/dataset/test/non_referral/0023.mp4"
     
+    # Number of frames to sample - using 32 frames as in your error message
+    num_frames = 32
+    
+    # Set random seed for reproducibility
+    random.seed(42)
+    
     # Create visualization
-    fig = plot_all_sampling_methods(video_path)
+    fig = visualize_sampling_methods(video_path, num_frames)
     
     # Save figure
-    fig.savefig('sampling_methods_comparison.png', bbox_inches='tight', dpi=300)
+    fig.savefig('custom_sampling_methods_comparison.png', bbox_inches='tight', dpi=300)
     plt.close()
-    print("Sampling methods comparison saved as 'sampling_methods_comparison.png'")
+    print("Sampling methods comparison saved as 'custom_sampling_methods_comparison.png'")

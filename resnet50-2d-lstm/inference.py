@@ -1,6 +1,5 @@
 import argparse
 import torch
-from torchvision import transforms
 import os
 import glob
 import logging
@@ -13,14 +12,6 @@ import json
 from datetime import datetime
 
 from src.models.model import VideoResNet50LSTM 
-from pytorchvideo.data import make_clip_sampler
-from pytorchvideo.data.encoded_video import EncodedVideo
-from pytorchvideo.transforms import (
-    ApplyTransformToKey,
-    UniformTemporalSubsample,
-    ShortSideScale,
-    Normalize,
-)
 from src.utils.logging_utils import setup_logging, create_directories
 from src.config.config import DEFAULT_CONFIG
 
@@ -30,13 +21,6 @@ class VideoInference:
         self.sequence_length = sequence_length
         self.sampling_method = sampling_method
         self.fps = 30  # Default FPS
-        
-        # Setup clip sampler
-        self.clip_duration = float(sequence_length) / self.fps
-        self.clip_sampler = make_clip_sampler(
-            sampling_method,
-            self.clip_duration
-        )
         
         # Initialize model
         self.model = VideoResNet50LSTM(
@@ -49,45 +33,134 @@ class VideoInference:
         self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         self.model.eval()
         
-        # Setup transform
-        self.transform = ApplyTransformToKey(
-            key="video",
-            transform=transforms.Compose([
-                UniformTemporalSubsample(self.sequence_length),
-                ShortSideScale(256),
-                transforms.CenterCrop(224),
-                Normalize((0.45, 0.45, 0.45), (0.225, 0.225, 0.225))
-            ]),
-        )
+        # Setup normalization values
+        self.mean = [0.45, 0.45, 0.45]
+        self.std = [0.225, 0.225, 0.225]
+    
+    def get_video_properties(self, video_path):
+        """Get video properties using OpenCV"""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
+        
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        duration_sec = total_frames / fps
+        
+        cap.release()
+        return total_frames, fps, duration_sec, width, height
+    
+    def get_frame_from_video(self, video_path, frame_idx):
+        """Extract a specific frame from a video"""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
+        
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        
+        cap.release()
+        
+        if not ret:
+            logging.warning(f"Could not read frame {frame_idx}, using placeholder")
+            frame = np.zeros((224, 224, 3), dtype=np.uint8)
+        
+        # Convert BGR to RGB
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return frame
+    
+    def random_sampling(self, total_frames, num_frames):
+        """Randomly sample frames from the entire video"""
+        # Set seed for reproducibility
+        np.random.seed(42)
+        
+        # Ensure num_frames doesn't exceed total_frames
+        num_frames = min(num_frames, total_frames)
+        
+        # Random sampling without replacement
+        frame_indices = sorted(np.random.choice(total_frames, num_frames, replace=False))
+        return frame_indices
+    
+    def uniform_sampling(self, total_frames, num_frames):
+        """Sample frames at regular intervals across the video"""
+        # Ensure num_frames doesn't exceed total_frames
+        num_frames = min(num_frames, total_frames)
+        
+        if num_frames == 1:
+            return [total_frames // 2]  # Middle frame
+        
+        # Calculate step size
+        step = (total_frames - 1) / (num_frames - 1)
+        
+        # Generate evenly spaced indices
+        frame_indices = [min(int(i * step), total_frames - 1) for i in range(num_frames)]
+        return frame_indices
+    
+    def random_window_sampling(self, total_frames, num_frames):
+        """Divide video into equal windows and randomly sample from each"""
+        # Set seed for reproducibility
+        np.random.seed(42)
+        
+        # Ensure num_frames doesn't exceed total_frames
+        num_frames = min(num_frames, total_frames)
+        
+        # Calculate window size
+        window_size = total_frames / num_frames
+        
+        frame_indices = []
+        for i in range(num_frames):
+            start = int(i * window_size)
+            end = min(int((i + 1) * window_size), total_frames)
+            end = max(end, start + 1)  # Ensure window has at least 1 frame
+            frame_idx = np.random.randint(start, end)
+            frame_indices.append(frame_idx)
+        
+        return frame_indices
     
     def predict_video(self, video_path):
         try:
-            # Use PyTorchVideo EncodedVideo to load the video
-            video = EncodedVideo.from_path(video_path)
-            duration = video.duration or 10.0
+            # Get video properties
+            total_frames, fps, duration_sec, width, height = self.get_video_properties(video_path)
             
-            # Sample a clip
-            clip_start_sec = 0
-            clip_info = self.clip_sampler(clip_start_sec, duration, None)
+            # Sample frames based on sampling method
+            if self.sampling_method == 'random':
+                frame_indices = self.random_sampling(total_frames, self.sequence_length)
+            elif self.sampling_method == 'random_window':
+                frame_indices = self.random_window_sampling(total_frames, self.sequence_length)
+            else:  # default to uniform
+                frame_indices = self.uniform_sampling(total_frames, self.sequence_length)
             
-            if clip_info is None:
-                raise ValueError(f"Could not sample clip from video: {video_path}")
+            # Extract frames
+            frames = []
+            for frame_idx in frame_indices:
+                frame = self.get_frame_from_video(video_path, frame_idx)
+                frame = cv2.resize(frame, (224, 224))  # Resize to model input size
+                frames.append(frame)
             
-            # Get clip data
-            video_data = video.get_clip(
-                clip_info.clip_start_sec,
-                clip_info.clip_end_sec
-            )
+            # Stack frames into a batch
+            frames = np.stack(frames, axis=0)
+            frames = frames.astype(np.float32) / 255.0
             
-            # Apply transforms
-            video_data = self.transform(video_data)
-            frames = video_data["video"].unsqueeze(0).to(self.device)
+            # Convert to tensor
+            frames = torch.FloatTensor(frames)
             
+            # Apply normalization
+            frames = frames - torch.tensor(self.mean).view(1, 1, 1, 3)
+            frames = frames / torch.tensor(self.std).view(1, 1, 1, 3)
+            
+            # Rearrange to [C, T, H, W] as expected by the model
+            frames = frames.permute(3, 0, 1, 2)
+            frames = frames.unsqueeze(0)  # Add batch dimension [B, C, T, H, W]
+            
+            # Make prediction
             with torch.no_grad():
+                frames = frames.to(self.device)
                 outputs = self.model(frames)
                 probability = torch.sigmoid(outputs).cpu().numpy()[0][0]
                 prediction = 'referral' if probability >= 0.5 else 'non_referral'
-                
+            
             return {
                 'video_path': video_path,
                 'prediction': prediction,
@@ -112,7 +185,7 @@ def main():
     parser.add_argument('--output_dir', type=str, default='inference_results',
                         help='Directory to save inference results')
     parser.add_argument('--sampling_method', type=str, default='uniform',
-                        choices=['uniform', 'random', 'sliding'],
+                        choices=['uniform', 'random', 'random_window'],
                         help='Frame sampling method')
     parser.add_argument('--sequence_length', type=int, default=32,
                         help='Number of frames to sample from each video')
@@ -201,7 +274,7 @@ if __name__ == "__main__":
 """
 python3 resnet50-2d-lstm/inference.py \
     --videos_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset/val/non_referral \
-    --model_path resnet2d-lstm-models/model_20250225_112709.pth \
+    --model_path resnet50-2d-lstm-models/model_20250304_170408.pth \
     --output_dir resnet_inference_results \
     --sampling_method uniform \
     --sequence_length 32

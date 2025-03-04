@@ -71,13 +71,23 @@ python3 resnet50-2d-lstm/main.py \
     --test_sampling uniform
 ```
 
+## Sampling Methods
+
+The model supports three different frame sampling strategies:
+
+1. **Uniform Sampling**: Samples frames at regular intervals across the video, ensuring equal spacing between frames. This is useful for getting a consistent view of the entire video.
+
+2. **Random Sampling**: Randomly selects frames from the entire video. This introduces randomness that can help with model generalization.
+
+3. **Random Window Sampling**: Divides the video into equal segments and randomly samples one frame from each segment. This ensures the model sees frames from throughout the video while maintaining some randomness.
+
 ### Training Arguments
 
 - `--data_dir`: Path to the dataset directory for training and validation data
 - `--test_dir`: Path to the separate test dataset directory (optional, uses data_dir if not specified)
 - `--log_dir`: Directory for saving logs and visualizations
 - `--model_dir`: Directory for saving model checkpoints
-- `--train_sampling`: Frame sampling method for training (uniform/random/sliding)
+- `--train_sampling`: Frame sampling method for training (uniform/random/random_window)
 - `--val_sampling`: Frame sampling method for validation
 - `--test_sampling`: Frame sampling method for testing
 - `--loss_weight`: Weight for loss in model selection (0-1). Higher values prioritize minimizing loss over maximizing AUROC (default: 0.3)
