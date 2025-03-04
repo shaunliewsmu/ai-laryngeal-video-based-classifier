@@ -10,8 +10,8 @@ iqm_filtered_dataset
 model/
 training_results/
 training_result/
-resnet50-models/
-resnet2d-lstm-models/
+resnet50-3d-video-models/
+resnet50-2d-lstm-models/
 resnet_inference_results/
 swin3d-models/
 vivit-models/
