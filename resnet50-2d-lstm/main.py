@@ -1,10 +1,8 @@
 import argparse
 import torch
-from torchvision import transforms
 from torch.utils.data import DataLoader
 import os
 import logging
-import cv2
 from tqdm import tqdm
 import numpy as np
 from datetime import datetime
@@ -187,8 +185,8 @@ python3 resnet50-2d-lstm/main.py \
     --test_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
     --log_dir logs \
     --model_dir resnet50-2d-lstm-models \
-    --train_sampling random \
+    --train_sampling random_window \
     --val_sampling random \
-    --test_sampling random \
+    --test_sampling uniform \
     --loss_weight 0.2
 """

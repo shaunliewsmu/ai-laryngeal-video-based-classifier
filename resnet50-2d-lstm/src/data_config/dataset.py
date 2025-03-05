@@ -1,5 +1,6 @@
-# Updated VideoDataset class in dataset.py
-import os
+import random
+import numpy as np
+import cv2
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
@@ -81,33 +82,83 @@ class VideoDataset(Dataset):
                     ]),
                 )
     
-    def get_sampling_indices(self, total_frames):
-        """Get frame indices based on sampling method"""
+    def get_sampling_indices(self, video_path, total_frames):
+        """
+        Get frame indices based on sampling method, with dynamic FPS for short videos.
+        
+        Args:
+            video_path (str): Path to the video file
+            total_frames (int): Total number of frames in the video
+            
+        Returns:
+            list: Frame indices to sample
+        """
         # Set random seed for reproducibility
         random.seed(42)
         
-        # Ensure we don't request more frames than available
-        num_frames = min(self.sequence_length, total_frames)
+        # For videos with enough frames, use standard sampling
+        if total_frames >= self.sequence_length:
+            if self.sampling_method == 'random':
+                # Random sampling without replacement
+                indices = sorted(random.sample(range(total_frames), self.sequence_length))
+            elif self.sampling_method == 'random_window':
+                # Random window sampling
+                window_size = total_frames / self.sequence_length
+                indices = []
+                for i in range(self.sequence_length):
+                    start = int(i * window_size)
+                    end = min(int((i + 1) * window_size), total_frames)
+                    end = max(end, start + 1)  # Ensure window has at least 1 frame
+                    frame_idx = random.randint(start, end - 1)
+                    indices.append(frame_idx)
+            else:  # Default to uniform sampling
+                if self.sequence_length == 1:
+                    indices = [total_frames // 2]  # Middle frame
+                else:
+                    step = (total_frames - 1) / (self.sequence_length - 1)
+                    indices = [min(int(i * step), total_frames - 1) for i in range(self.sequence_length)]
         
-        if self.sampling_method == 'random':
-            # Random sampling without replacement
-            indices = sorted(random.sample(range(total_frames), num_frames))
-        elif self.sampling_method == 'random_window':
-            # Random window sampling
-            window_size = total_frames / num_frames
-            indices = []
-            for i in range(num_frames):
-                start = int(i * window_size)
-                end = min(int((i + 1) * window_size), total_frames)
-                end = max(end, start + 1)  # Ensure window has at least 1 frame
-                frame_idx = random.randint(start, end - 1)
-                indices.append(frame_idx)
-        else:  # Default to uniform sampling
-            if num_frames == 1:
-                indices = [total_frames // 2]  # Middle frame
-            else:
-                step = (total_frames - 1) / (num_frames - 1)
-                indices = [min(int(i * step), total_frames - 1) for i in range(num_frames)]
+        # For videos with fewer frames than requested, use dynamic adjustment
+        else:
+            # Get original video FPS for proper time scaling
+            cap = cv2.VideoCapture(video_path)
+            original_fps = cap.get(cv2.CAP_PROP_FPS)
+            duration = total_frames / original_fps  # in seconds
+            cap.release()
+            
+            # Calculate optimal sampling rate to get the exact number of frames requested
+            dynamic_fps = self.sequence_length / duration
+            
+            if self.logger:
+                self.logger.info(f"Dynamic adjustment: Video {video_path} has {total_frames} frames, "
+                                f"adjusted to get {self.sequence_length} frames.")
+            
+            # Use the sampling method with the adjusted parameters
+            if self.sampling_method == 'random':
+                # With dynamic adjustment, we'll need to allow duplicates since total_frames < sequence_length
+                # Use random.choices which allows replacement
+                indices = sorted(random.choices(range(total_frames), k=self.sequence_length))
+            elif self.sampling_method == 'random_window':
+                # For random window with fewer frames, create virtual windows smaller than 1 frame
+                indices = []
+                window_size = total_frames / self.sequence_length  # Will be < 1
+                
+                for i in range(self.sequence_length):
+                    # Calculate virtual window boundaries
+                    virtual_start = i * window_size
+                    virtual_end = (i + 1) * window_size
+                    
+                    # Convert to actual frame indices with potential duplicates
+                    actual_index = min(int(np.floor(virtual_start + (virtual_end - virtual_start) * random.random())), 
+                                    total_frames - 1)
+                    indices.append(actual_index)
+            else:  # Uniform sampling
+                if self.sequence_length == 1:
+                    indices = [total_frames // 2]  # Middle frame
+                else:
+                    # Create evenly spaced indices that might include duplicates
+                    step = total_frames / self.sequence_length
+                    indices = [min(int(i * step), total_frames - 1) for i in range(self.sequence_length)]
         
         return indices
 
@@ -128,10 +179,14 @@ class VideoDataset(Dataset):
             
             # Get video duration and calculate total frames
             duration = video.duration or 10.0
-            total_frames = int(duration * self.fps)
+            
+            # Get total frames using OpenCV for more reliable frame count
+            cap = cv2.VideoCapture(video_path)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
             
             # Get sampling indices based on our custom method
-            frame_indices = self.get_sampling_indices(total_frames)
+            frame_indices = self.get_sampling_indices(video_path, total_frames)
             
             # Convert frame indices to timestamps (seconds)
             timestamps = [idx / self.fps for idx in frame_indices]
