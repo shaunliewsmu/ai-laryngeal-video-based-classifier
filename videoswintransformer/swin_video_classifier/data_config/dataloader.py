@@ -41,8 +41,6 @@ def create_dataloaders(args, logger):
                 mode=split,
                 sampling_method=sampling_methods[split],
                 num_frames=args.num_frames,
-                fps=args.fps,
-                stride=args.stride,
                 logger=logger
             )
             
@@ -72,8 +70,6 @@ def create_dataloaders(args, logger):
             mode='test',
             sampling_method=sampling_methods['test'],
             num_frames=args.num_frames,
-            fps=args.fps,
-            stride=args.stride,
             logger=logger
         )
         

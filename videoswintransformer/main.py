@@ -3,12 +3,15 @@ import torch.nn as nn
 import numpy as np
 import random
 import argparse
+import cv2
+from pathlib import Path
 
 from swin_video_classifier.data_config.dataloader import create_dataloaders
 from swin_video_classifier.models.swin3d import create_model
 from swin_video_classifier.trainers.trainer import ModelTrainer
 from swin_video_classifier.evaluators.evaluator import ModelEvaluator
 from swin_video_classifier.utils.logger import ExperimentLogger
+from swin_video_classifier.utils.visualization import TrainingVisualizer
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Video Swin Transformer Training')
@@ -23,20 +26,16 @@ def parse_args():
     
     # Dataset and sampling parameters
     parser.add_argument('--train_sampling', type=str, default='uniform',
-                      choices=['random', 'uniform', 'sliding'],
+                      choices=['random', 'uniform', 'random_window'],
                       help='Sampling method for training')
     parser.add_argument('--val_sampling', type=str, default='uniform',
-                      choices=['random', 'uniform', 'sliding'],
+                      choices=['random', 'uniform', 'random_window'],
                       help='Sampling method for validation')
     parser.add_argument('--test_sampling', type=str, default='uniform',
-                      choices=['random', 'uniform', 'sliding'],
+                      choices=['random', 'uniform', 'random_window'],
                       help='Sampling method for testing')
     parser.add_argument('--num_frames', type=int, default=32,
                       help='Number of frames to sample')
-    parser.add_argument('--fps', type=int, default=30,
-                      help='Frames per second')
-    parser.add_argument('--stride', type=float, default=0.5,
-                      help='Stride fraction for sliding window')
     
     # Model parameters
     parser.add_argument('--model_size', type=str, default='tiny',
@@ -106,6 +105,61 @@ def main():
         dataloaders = create_dataloaders(args, logger)
         logger.info("Dataloaders created successfully")
         
+        # Create visualization directory
+        viz_dir = exp_logger.get_experiment_dir() / 'visualizations'
+        viz_dir.mkdir(exist_ok=True)
+        
+        # Visualize sampling methods for each split
+        visualizer = TrainingVisualizer(exp_logger.get_experiment_dir())
+        
+        # Visualize sampling methods for one example video from each split
+        sampling_methods = {
+            'train': args.train_sampling,
+            'val': args.val_sampling,
+            'test': args.test_sampling
+        }
+        
+        for split, sampling_method in sampling_methods.items():
+            # Find an example video
+            split_dir = Path(args.data_dir) / split
+            if not split_dir.exists() and split == 'test' and args.test_data_dir:
+                split_dir = Path(args.test_data_dir) / split
+                
+            if split_dir.exists():
+                # Get first video found
+                video_path = None
+                for class_dir in split_dir.iterdir():
+                    if class_dir.is_dir():
+                        videos = list(class_dir.glob('*.mp4'))
+                        if videos:
+                            video_path = videos[0]
+                            break
+                
+                if video_path:
+                    # Create the visualization
+                    save_path = viz_dir / f'sampled_frames_{split}_{sampling_method}.png'
+                    try:
+                        visualizer.visualize_sampling(
+                            video_path,
+                            sampling_method,
+                            args.num_frames,
+                            save_path,
+                            f"{split.capitalize()} Split"
+                        )
+                        logger.info(f"Created sampling visualization for {split} split at {save_path}")
+                        
+                        # Check if this video needed dynamic FPS adjustment
+                        cap = cv2.VideoCapture(video_path)
+                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        cap.release()
+                        
+                        if total_frames < args.num_frames:
+                            logger.info(f"Note: The example video for {split} split has {total_frames} frames, "
+                                     f"which is less than the requested {args.num_frames} frames. "
+                                     f"Dynamic FPS adjustment was applied.")
+                    except Exception as e:
+                        logger.error(f"Error creating sampling visualization for {split}: {str(e)}")
+        
         # Define loss function and optimizer
         criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.AdamW(
@@ -152,12 +206,10 @@ python3 videoswintransformer/main.py \
   --model_dir swin3d-models \
   --model_size tiny \
   --pretrained \
-  --train_sampling random \
+  --train_sampling random_window \
   --val_sampling uniform \
   --test_sampling uniform \
   --num_frames 32 \
-  --fps 8 \
-  --stride 0.5 \
   --batch_size 2 \
   --epochs 40 \
   --learning_rate 0.0001 \
