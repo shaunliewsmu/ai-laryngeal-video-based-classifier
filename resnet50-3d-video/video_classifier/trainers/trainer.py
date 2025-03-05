@@ -90,7 +90,7 @@ class ModelTrainer:
                     
                 running_loss = 0.0
                 running_corrects = 0
-                total_clips = 0
+                total_samples = 0
                 
                 # Batch progress bar for each phase
                 batch_pbar = tqdm(self.dataloaders[phase], 
@@ -102,10 +102,11 @@ class ModelTrainer:
                 
                 for inputs, labels in batch_pbar:
                     try:
-                        # Handle input shape (B, num_clips, C, T, H, W)
-                        b, n, c, t, h, w = inputs.shape
-                        inputs = inputs.view(b * n, c, t, h, w)
-                        labels = labels.view(-1)
+                        # Handle input shape which may be [batch_size, num_clips, C, T, H, W]
+                        if len(inputs.shape) == 6:  # Handle multiple clips per video
+                            b, n, c, t, h, w = inputs.shape
+                            inputs = inputs.view(b * n, c, t, h, w)
+                            labels = labels.view(-1)
                         
                         inputs = inputs.to(self.device)
                         labels = labels.to(self.device)
@@ -126,7 +127,7 @@ class ModelTrainer:
                         batch_corrects = torch.sum(preds == labels.data)
                         running_loss += batch_loss
                         running_corrects += batch_corrects
-                        total_clips += inputs.size(0)
+                        total_samples += inputs.size(0)
                         
                         # Update progress bar metrics
                         batch_acc = batch_corrects.double() / inputs.size(0)
@@ -137,10 +138,10 @@ class ModelTrainer:
                         
                     except Exception as e:
                         self.logger.error(f"Error during {phase} step: {str(e)}")
-                        raise
+                        continue
                 
-                epoch_loss = running_loss / total_clips
-                epoch_acc = running_corrects.double() / total_clips
+                epoch_loss = running_loss / max(total_samples, 1)
+                epoch_acc = running_corrects.double() / max(total_samples, 1)
                 
                 # Store metrics for visualization
                 epoch_metrics[f'{phase}_loss'] = epoch_loss
@@ -162,7 +163,7 @@ class ModelTrainer:
                     # Check if model should be saved
                     if self._should_save_model(epoch_loss, epoch_acc):
                         self.best_val_loss = epoch_loss
-                        self.best_val_acc = max(epoch_acc, self.best_val_acc)  # Keep highest accuracy
+                        self.best_val_acc = max(epoch_acc.item(), self.best_val_acc)  # Keep highest accuracy
                         best_model_weights = self.model.state_dict().copy()
                         self._save_best_model(epoch, epoch_loss, epoch_acc, best_model_weights)
                         self.logger.info(f'New best model saved! Loss: {epoch_loss:.4f}, Acc: {epoch_acc:.4f}')
@@ -175,9 +176,16 @@ class ModelTrainer:
                 
             # Plot training history after each epoch
             self.visualizer.plot_training_history(self.history)
+            
+            # Check early stopping
+            self.early_stopping(epoch_metrics['val_loss'], self.model, self.optimizer, epoch, self.history)
+            if self.early_stopping.early_stop:
+                self.logger.info(f"Early stopping triggered after {epoch+1} epochs")
+                break
         
         self.logger.info(f'Best val Loss: {self.best_val_loss:.4f}, Best val Acc: {self.best_val_acc:4f}')
-        self.model.load_state_dict(best_model_weights)
+        if best_model_weights:
+            self.model.load_state_dict(best_model_weights)
         return self.model
     
     def _save_best_model(self, epoch, val_loss, val_acc, best_model_weights):

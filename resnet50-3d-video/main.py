@@ -3,12 +3,15 @@ import torch.nn as nn
 import numpy as np
 import random
 import argparse
+import os
+from pathlib import Path
 
 from video_classifier.data_config.dataloader import create_dataloaders
 from video_classifier.models.resnet3d import create_model
 from video_classifier.trainers.trainer import ModelTrainer
 from video_classifier.evaluators.evaluator import ModelEvaluator
 from video_classifier.utils.logger import ExperimentLogger
+from video_classifier.utils.visualization import TrainingVisualizer
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Video Classification Training')
@@ -22,20 +25,16 @@ def parse_args():
     parser.add_argument('--model_dir', type=str, required=True,
                       help='Directory to save models')
     parser.add_argument('--train_sampling', type=str, default='uniform',
-                      choices=['random', 'uniform', 'sliding'],
+                      choices=['random', 'uniform', 'random_window'],
                       help='Sampling method for training')
     parser.add_argument('--val_sampling', type=str, default='uniform',
-                      choices=['random', 'uniform', 'sliding'],
+                      choices=['random', 'uniform', 'random_window'],
                       help='Sampling method for validation')
     parser.add_argument('--test_sampling', type=str, default='uniform',
-                      choices=['random', 'uniform', 'sliding'],
+                      choices=['random', 'uniform', 'random_window'],
                       help='Sampling method for testing')
     parser.add_argument('--num_frames', type=int, default=32,
                       help='Number of frames to sample')
-    parser.add_argument('--fps', type=int, default=30,
-                      help='Frames per second')
-    parser.add_argument('--stride', type=float, default=0.5,
-                      help='Stride fraction for sliding window')
     parser.add_argument('--batch_size', type=int, default=8,
                       help='Batch size')
     parser.add_argument('--num_workers', type=int, default=4,
@@ -84,8 +83,45 @@ def main():
         
         # Create dataloaders
         logger.info("Creating dataloaders...")
-        dataloaders = create_dataloaders(args, logger)
+        datasets, dataloaders = create_dataloaders(args, logger)
         logger.info("Dataloaders created successfully")
+        
+        # Create visualization directory
+        viz_dir = exp_logger.get_experiment_dir() / 'visualizations'
+        viz_dir.mkdir(exist_ok=True)
+        
+        # Visualize sampling methods for each split
+        visualizer = TrainingVisualizer(exp_logger.get_experiment_dir())
+        
+        # Visualize sampling methods for one example video from each split
+        for split, dataset in datasets.items():
+            if len(dataset.video_paths) > 0:
+                example_video = dataset.video_paths[0]
+                sampling_method = getattr(args, f"{split}_sampling")
+                
+                # Create the visualization
+                save_path = viz_dir / f'sampled_frames_{split}_{sampling_method}.png'
+                try:
+                    visualizer.visualize_sampling(
+                        example_video,
+                        sampling_method,
+                        args.num_frames,
+                        save_path,
+                        f"{split.capitalize()} Split"
+                    )
+                    logger.info(f"Created sampling visualization for {split} split at {save_path}")
+                    
+                    # Check if this video needed dynamic FPS adjustment
+                    cap = cv2.VideoCapture(example_video)
+                    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    cap.release()
+                    
+                    if total_frames < args.num_frames:
+                        logger.info(f"Note: The example video for {split} split has {total_frames} frames, "
+                                   f"which is less than the requested {args.num_frames} frames. "
+                                   f"Dynamic FPS adjustment was applied.")
+                except Exception as e:
+                    logger.error(f"Error creating sampling visualization for {split}: {str(e)}")
         
         # Define loss function and optimizer
         criterion = nn.CrossEntropyLoss()
@@ -119,6 +155,7 @@ def main():
     logger.info("Training and evaluation pipeline completed successfully")
 
 if __name__ == "__main__":
+    import cv2  # Adding cv2 import here for frame count check
     main()
     
 """
@@ -127,16 +164,13 @@ python3 resnet50-3d-video/main.py \
 --test_data_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset \
 --log_dir logs \
 --model_dir resnet50-3d-video-models \
---train_sampling random \
+--train_sampling random_window \
 --val_sampling uniform \
---test_sampling uniform \
+--test_sampling random_window \
 --num_frames 32 \
---fps 2 \
---stride 0.5 \
 --batch_size 2 \
 --epochs 40 \
 --learning_rate 0.01 \
 --num_workers 2 \
 --patience 7
-
 """

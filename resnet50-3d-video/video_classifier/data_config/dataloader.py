@@ -41,8 +41,6 @@ def create_dataloaders(args, logger):
                 mode=split,
                 sampling_method=sampling_methods[split],
                 num_frames=args.num_frames,
-                fps=args.fps,
-                stride=args.stride,
                 logger=logger
             )
             
@@ -51,8 +49,7 @@ def create_dataloaders(args, logger):
                 batch_size=args.batch_size,
                 shuffle=(split == 'train'),
                 num_workers=args.num_workers,
-                pin_memory=True,
-                collate_fn=video_collate_fn
+                pin_memory=True
             )
             
             logger.info(
@@ -72,8 +69,6 @@ def create_dataloaders(args, logger):
             mode='test',
             sampling_method=sampling_methods['test'],
             num_frames=args.num_frames,
-            fps=args.fps,
-            stride=args.stride,
             logger=logger
         )
         
@@ -82,8 +77,7 @@ def create_dataloaders(args, logger):
             batch_size=args.batch_size,
             shuffle=False,
             num_workers=args.num_workers,
-            pin_memory=True,
-            collate_fn=video_collate_fn
+            pin_memory=True
         )
         
         logger.info(
@@ -95,4 +89,4 @@ def create_dataloaders(args, logger):
         logger.error(f"Error creating test dataset/dataloader: {str(e)}")
         raise
     
-    return dataloaders
+    return datasets, dataloaders
