@@ -1,13 +1,15 @@
+# timesformer/inference.py
+
 import torch
 import argparse
 import json
-import av
+import cv2
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from transformers import AutoImageProcessor
-from pytorchvideo.data import make_clip_sampler
 from timesformer_classifier.utils.logger import ExperimentLogger
+from timesformer_classifier.data_config.dataset import VideoDataset
 
 def parse_args():
     parser = argparse.ArgumentParser(description='TimeSformer Transformer Inference')
@@ -19,13 +21,9 @@ def parse_args():
                       help='Directory to save inference logs')
     parser.add_argument('--num_frames', type=int, default=32,
                       help='Number of frames to sample')
-    parser.add_argument('--fps', type=int, default=8,
-                      help='Frames per second for clip sampling')
     parser.add_argument('--sampling_method', type=str, default='uniform',
-                      choices=['random', 'uniform', 'sliding'],
+                      choices=['random', 'uniform', 'random_window'],
                       help='Method to sample frames from video')
-    parser.add_argument('--stride', type=float, default=0.5,
-                      help='Stride fraction for sliding window (if applicable)')
     parser.add_argument('--num_classes', type=int, default=2,
                       help='Number of output classes')
     parser.add_argument('--save_viz', action='store_true',
@@ -52,7 +50,6 @@ def load_model(model_path, num_frames, num_classes, device, logger):
             config = TimesformerConfig.from_pretrained("facebook/timesformer-base-finetuned-k400")
             config.num_classes = num_classes
             config.num_frames = num_frames
-            config.video_size = [num_frames, 224, 224]
             
             # Get label mappings from checkpoint or use defaults
             id2label = checkpoint.get('id2label', {0: 'non-referral', 1: 'referral'})
@@ -83,98 +80,74 @@ def load_model(model_path, num_frames, num_classes, device, logger):
         logger.error(f"Error loading model: {str(e)}")
         raise
 
-def read_video_pyav(container, indices):
-    '''
-    Decode the video with PyAV decoder.
-    Args:
-        container (`av.container.input.InputContainer`): PyAV container.
-        indices (`List[int]`): List of frame indices to decode.
-    Returns:
-        result (np.ndarray): np array of decoded frames of shape (num_frames, height, width, 3).
-    '''
-    frames = []
-    container.seek(0)
-    start_index = indices[0]
-    end_index = indices[-1]
-    for i, frame in enumerate(container.decode(video=0)):
-        if i > end_index:
-            break
-        if i >= start_index and i in indices:
-            frames.append(frame)
-    
-    if len(frames) == 0:
-        raise ValueError(f"No frames found between indices {start_index} and {end_index}")
-    
-    return np.stack([x.to_ndarray(format="rgb24") for x in frames])
-
-def predict_video(video_path, model, device, num_frames, fps, sampling_method, 
-                  stride, logger, save_viz=False):
-    """Make prediction on a video using pytorchvideo sampling."""
+def predict_video(video_path, model, device, num_frames, sampling_method, 
+                  logger, save_viz=False):
+    """Make prediction on a video using custom sampling method."""
     try:
-        # Load video
-        container = av.open(video_path)
+        # Create a temporary dataset object to use its sampling methods
+        temp_dataset = VideoDataset(
+            root_dir=Path(video_path).parent.parent.parent,
+            mode='inference',
+            sampling_method=sampling_method,
+            num_frames=num_frames,
+            logger=logger
+        )
         
-        # Get video duration in seconds
-        video_fps = container.streams.video[0].average_rate
-        video_frames = container.streams.video[0].frames
-        video_duration = float(video_frames) / video_fps
+        # Get video properties
+        total_frames, fps, duration_sec, width, height = temp_dataset.get_video_properties(video_path)
         
-        logger.info(f"Loaded video: {video_path} with {video_frames} frames, duration: {video_duration:.2f}s")
+        logger.info(f"Loaded video: {video_path} with {total_frames} frames, duration: {duration_sec:.2f}s")
         
-        # Calculate clip duration
-        clip_duration = float(num_frames) / fps
-        
-        if video_duration < clip_duration:
-            logger.warning(f"Video duration ({video_duration:.2f}s) is shorter than required clip duration ({clip_duration:.2f}s)")
+        if total_frames == 0:
+            logger.error(f"Video has no frames")
             return None, None
         
-        # Setup clip sampler
-        if sampling_method == 'sliding':
-            stride_duration = clip_duration * stride
-            clip_sampler = make_clip_sampler('uniform', clip_duration, stride_duration)
-        else:
-            clip_sampler = make_clip_sampler(sampling_method, clip_duration)
+        # Get frame indices using the dataset's sampling method
+        frame_indices = temp_dataset.get_sampling_indices(video_path, total_frames)
         
-        # Get clip
-        clip_info = clip_sampler(0, video_duration, None)
+        logger.info(f"Sampling {num_frames} frames using {sampling_method} sampling method")
         
-        if clip_info is None:
-            logger.error(f"Failed to sample clip from video")
-            return None, None
-        
-        # Extract clip
-        # Convert fractions to float to avoid formatting issues
-        start_sec = float(clip_info.clip_start_sec)
-        end_sec = float(clip_info.clip_end_sec)
-        
-        logger.info(f"Sampling clip from {start_sec:.2f}s to {end_sec:.2f}s using {sampling_method} sampling")
-        
-        # Simply extract frames uniformly across the video
-        indices = np.linspace(0, video_frames-1, num_frames).astype(int)
-        
-        # Extract frames directly
-        container.seek(0)
+        # Extract frames using OpenCV
+        cap = cv2.VideoCapture(str(video_path))
         frames = []
-        for i, frame in enumerate(container.decode(video=0)):
-            if i in indices:
-                frames.append(frame.to_ndarray(format="rgb24"))
-                if len(frames) >= num_frames:
-                    break
         
-        if len(frames) < num_frames:
-            logger.warning(f"Could only extract {len(frames)} frames, needed {num_frames}")
-            if len(frames) == 0:
-                return None, None
-            # Pad with duplicates of the last frame
-            while len(frames) < num_frames:
-                frames.append(frames[-1])
+        for frame_idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = cap.read()
+            if not ret:
+                logger.warning(f"Could not read frame {frame_idx}, using placeholder")
+                frame = np.zeros((224, 224, 3), dtype=np.uint8)
+            else:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = cv2.resize(frame, (224, 224))
+            frames.append(frame)
         
+        cap.release()
+        
+        # Stack frames into a video tensor
         video = np.stack(frames)
         logger.info(f"Extracted {len(video)} frames with shape {video.shape}")
         
         # Save visualization if requested
         if save_viz:
-            save_frame_visualization(video, Path(video_path).stem)
+            # Create visualization directory
+            viz_dir = Path('visualization_outputs')
+            viz_dir.mkdir(exist_ok=True)
+            
+            video_name = Path(video_path).stem
+            save_path = viz_dir / f"{video_name}_{sampling_method}_sampling.png"
+            
+            from timesformer_classifier.utils.visualization import TrainingVisualizer
+            visualizer = TrainingVisualizer(viz_dir)
+            visualizer.visualize_sampling(
+                video_path,
+                sampling_method,
+                num_frames,
+                save_path,
+                "Inference"
+            )
+            
+            logger.info(f"Saved frame visualization to {save_path}")
         
         # Process frames
         image_processor = AutoImageProcessor.from_pretrained("facebook/timesformer-base-finetuned-k400")
@@ -205,27 +178,6 @@ def predict_video(video_path, model, device, num_frames, fps, sampling_method,
     except Exception as e:
         logger.error(f"Error during prediction: {str(e)}")
         raise
-
-def save_frame_visualization(video, video_name, num_frames_to_show=6):
-    """Save a grid visualization of sampled frames."""
-    fig, axes = plt.subplots(2, 3, figsize=(12, 8))
-    
-    # Flatten axes for easy indexing
-    axes = axes.flatten()
-    
-    # Select evenly spaced frames to display
-    step = len(video) // num_frames_to_show
-    indices = [i*step for i in range(num_frames_to_show)]
-    
-    for i, idx in enumerate(indices):
-        if i < len(axes) and idx < len(video):
-            axes[i].imshow(video[idx])
-            axes[i].set_title(f"Frame {idx}")
-            axes[i].axis('off')
-    
-    plt.tight_layout()
-    plt.savefig(f"{video_name}_sampled_frames.png")
-    plt.close()
 
 def save_inference_result(exp_logger, video_path, class_name, confidence, id2label):
     """Save inference results to a JSON file."""
@@ -283,9 +235,7 @@ def main():
             model,
             device,
             args.num_frames,
-            args.fps,
             args.sampling_method,
-            args.stride,
             logger,
             args.save_viz
         )
@@ -320,10 +270,8 @@ if __name__ == "__main__":
 Example usage:
 python3 timesformer/inference.py \
   --video_path artifacts/laryngeal_dataset_iqm_filtered:v0/dataset/val/referral/0088_processed.mp4 \
-  --model_path timesformer-models/20250228_164256_timesformer-classifier_best_model.pth \
+  --model_path timesformer-models/20250305_165129_timesformer-classifier_best_model.pth \
   --num_frames 32 \
-  --fps 8 \
-  --sampling_method uniform \
-  --stride 0.5 \
+  --sampling_method random_window \
   --save_viz
 """

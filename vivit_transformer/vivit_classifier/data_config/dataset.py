@@ -6,17 +6,10 @@ import random
 from pathlib import Path
 import logging
 from pytorchvideo.data.encoded_video import EncodedVideo
-from pytorchvideo.transforms import (
-    ApplyTransformToKey,
-    UniformTemporalSubsample,
-    RandomShortSideScale,
-    ShortSideScale,
-    Normalize,
-)
 
 class VideoDataset(Dataset):
     def __init__(self, root_dir, mode='train', sampling_method='uniform', 
-                 num_frames=32, stride=0.5, logger=None):
+                 num_frames=32, logger=None):
         """
         Initialize the dataset for ViViT model training with custom frame sampling.
         
@@ -25,7 +18,6 @@ class VideoDataset(Dataset):
             mode (str): One of 'train', 'val', 'test'
             sampling_method (str): 'uniform', 'random', or 'random_window' 
             num_frames (int): Number of frames to sample per video
-            stride (float): Stride fraction for random_window sampling
             logger (logging.Logger, optional): Logger instance
         """
         self.root_dir = Path(root_dir)
@@ -41,7 +33,6 @@ class VideoDataset(Dataset):
         self.mode = mode
         self.num_frames = num_frames
         self.sampling_method = sampling_method
-        self.stride = stride
         self.logger = logger or logging.getLogger(__name__)
         
         # Set random seed for reproducibility
