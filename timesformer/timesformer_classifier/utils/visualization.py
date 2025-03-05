@@ -58,6 +58,20 @@ class TrainingVisualizer:
             class_names (list): List of class names
             title (str): Title for the plot
         """
+        # Handle empty confusion matrix
+        if len(conf_matrix) == 0:
+            plt.figure(figsize=(8, 6))
+            plt.text(0.5, 0.5, "No data available for confusion matrix", 
+                    horizontalalignment='center', fontsize=12)
+            plt.title(title)
+            plt.axis('off')
+            
+            filename = title.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_')
+            plt.savefig(self.save_dir / f'{filename}.png')
+            plt.close()
+            return
+        
+        # Rest of the original method...
         plt.figure(figsize=(8, 6))
         sns.heatmap(
             conf_matrix, 

@@ -207,7 +207,7 @@ python3 timesformer/main.py \
   --test_sampling uniform \
   --num_frames 32 \
   --batch_size 2 \
-  --epochs 40 \
+  --epochs 1 \
   --learning_rate 0.001 \
   --weight_decay 0.01 \
   --num_workers 2 \

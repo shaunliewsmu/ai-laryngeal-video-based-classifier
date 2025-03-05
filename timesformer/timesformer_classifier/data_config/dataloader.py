@@ -20,9 +20,20 @@ def video_collate_fn(batch):
             if len(frames.shape) == 4 and frames.shape[-1] == 3:
                 pixel_values.append(frames)
             else:
-                # Log error and create placeholder
-                print(f"Warning: Unexpected frame shape in collate_fn: {frames.shape}")
-                pixel_values.append(np.zeros((32, 224, 224, 3), dtype=np.uint8))
+                # Try to fix by squeezing any extra dimensions
+                try:
+                    # Squeeze and ensure proper shape
+                    fixed_frames = np.squeeze(frames)
+                    if len(fixed_frames.shape) == 4 and fixed_frames.shape[-1] == 3:
+                        pixel_values.append(fixed_frames)
+                    else:
+                        # Create placeholder if fixing didn't work
+                        print(f"Warning: Could not fix frame shape {frames.shape}, using placeholder")
+                        pixel_values.append(np.zeros((32, 224, 224, 3), dtype=np.uint8))
+                except:
+                    # If squeezing fails, log error and create placeholder
+                    print(f"Warning: Unexpected frame shape in collate_fn: {frames.shape}")
+                    pixel_values.append(np.zeros((32, 224, 224, 3), dtype=np.uint8))
                 
         if 'labels' in sample and sample['labels'] is not None:
             labels.append(sample['labels'])
