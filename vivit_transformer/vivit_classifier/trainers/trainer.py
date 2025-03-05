@@ -302,7 +302,6 @@ class ModelTrainer:
             'train_sampling': self.args.train_sampling,
             'val_sampling': self.args.val_sampling,
             'test_sampling': self.args.test_sampling,
-            'stride': self.args.stride
         }, self.model_save_path)
         
         self.logger.info(f"Saved best model to {self.model_save_path}")

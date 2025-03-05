@@ -156,8 +156,8 @@ if __name__ == "__main__":
 """
 Example usage:
 python3 timesformer/main.py \
-  --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
-  --test_data_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset \
+  --data_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
+  --test_data_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
   --log_dir logs \
   --model_dir timesformer-models \
   --train_sampling random \

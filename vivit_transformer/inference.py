@@ -1,7 +1,7 @@
 import torch
 import argparse
 import json
-import av
+import cv2
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -19,13 +19,9 @@ def parse_args():
                       help='Directory to save inference logs')
     parser.add_argument('--num_frames', type=int, default=32,
                       help='Number of frames to sample')
-    parser.add_argument('--fps', type=int, default=8,
-                      help='Frames per second for clip sampling')
     parser.add_argument('--sampling_method', type=str, default='uniform',
-                      choices=['random', 'uniform', 'sliding'],
+                      choices=['random', 'uniform', 'random_window'],
                       help='Method to sample frames from video')
-    parser.add_argument('--stride', type=float, default=0.5,
-                      help='Stride fraction for sliding window (if applicable)')
     parser.add_argument('--num_classes', type=int, default=2,
                       help='Number of output classes')
     parser.add_argument('--save_viz', action='store_true',
@@ -106,74 +102,80 @@ def read_video_pyav(container, indices):
     
     return np.stack([x.to_ndarray(format="rgb24") for x in frames])
 
-def predict_video(video_path, model, device, num_frames, fps, sampling_method, 
-                  stride, logger, save_viz=False):
-    """Make prediction on a video using pytorchvideo sampling."""
+def predict_video(video_path, model, device, num_frames, sampling_method, 
+                   logger, save_viz=False):
+    """Make prediction on a video using custom frame sampling."""
     try:
-        # Load video
-        container = av.open(video_path)
+        # Load video properties
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
         
-        # Get video duration in seconds
-        video_fps = container.streams.video[0].average_rate
-        video_frames = container.streams.video[0].frames
-        video_duration = float(video_frames) / video_fps
+        # Get video properties
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        video_fps = cap.get(cv2.CAP_PROP_FPS)
+        video_duration = float(total_frames) / video_fps
         
-        logger.info(f"Loaded video: {video_path} with {video_frames} frames, duration: {video_duration:.2f}s")
+        logger.info(f"Loaded video: {video_path} with {total_frames} frames, duration: {video_duration:.2f}s")
         
-        # Calculate clip duration
-        clip_duration = float(num_frames) / fps
-        
-        if video_duration < clip_duration:
-            logger.warning(f"Video duration ({video_duration:.2f}s) is shorter than required clip duration ({clip_duration:.2f}s)")
+        if total_frames == 0:
+            logger.error(f"Video has no frames")
             return None, None
         
-        # Setup clip sampler
-        if sampling_method == 'sliding':
-            stride_duration = clip_duration * stride
-            clip_sampler = make_clip_sampler('uniform', clip_duration, stride_duration)
-        else:
-            clip_sampler = make_clip_sampler(sampling_method, clip_duration)
+        # Create a dataset instance to use its sampling methods
+        from vivit_classifier.data_config.dataset import VideoDataset
+        temp_dataset = VideoDataset(
+            root_dir=Path(video_path).parent.parent.parent,
+            mode="inference",
+            sampling_method=sampling_method,
+            num_frames=num_frames,
+            logger=logger
+        )
         
-        # Get clip
-        clip_info = clip_sampler(0, video_duration, None)
+        # Get frame indices using the dataset's sampling method
+        frame_indices = temp_dataset.get_sampling_indices(video_path, total_frames)
         
-        if clip_info is None:
-            logger.error(f"Failed to sample clip from video")
-            return None, None
-        
-        # Extract clip
-        # Convert fractions to float to avoid formatting issues
-        start_sec = float(clip_info.clip_start_sec)
-        end_sec = float(clip_info.clip_end_sec)
-        
-        logger.info(f"Sampling clip from {start_sec:.2f}s to {end_sec:.2f}s using {sampling_method} sampling")
-        
-        # Simply extract frames uniformly across the video
-        indices = np.linspace(0, video_frames-1, num_frames).astype(int)
+        logger.info(f"Sampling {num_frames} frames using {sampling_method} sampling method")
         
         # Extract frames directly
-        container.seek(0)
         frames = []
-        for i, frame in enumerate(container.decode(video=0)):
-            if i in indices:
-                frames.append(frame.to_ndarray(format="rgb24"))
-                if len(frames) >= num_frames:
-                    break
         
-        if len(frames) < num_frames:
-            logger.warning(f"Could only extract {len(frames)} frames, needed {num_frames}")
-            if len(frames) == 0:
-                return None, None
-            # Pad with duplicates of the last frame
-            while len(frames) < num_frames:
-                frames.append(frames[-1])
+        for frame_idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = cap.read()
+            if not ret:
+                logger.warning(f"Could not read frame {frame_idx}, using placeholder")
+                frame = np.zeros((224, 224, 3), dtype=np.uint8)
+            else:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = cv2.resize(frame, (224, 224))
+            frames.append(frame)
         
+        cap.release()
+        
+        # Stack frames into a video tensor
         video = np.stack(frames)
         logger.info(f"Extracted {len(video)} frames with shape {video.shape}")
         
         # Save visualization if requested
         if save_viz:
-            save_frame_visualization(video, Path(video_path).stem)
+            video_name = Path(video_path).stem
+            save_dir = Path('visualization_outputs')
+            save_dir.mkdir(exist_ok=True)
+            
+            from vivit_classifier.utils.visualization import TrainingVisualizer
+            visualizer = TrainingVisualizer(save_dir)
+            save_path = save_dir / f"{video_name}_{sampling_method}_sampling.png"
+            
+            visualizer.visualize_sampling(
+                video_path,
+                sampling_method,
+                num_frames,
+                save_path,
+                "Inference"
+            )
+            
+            logger.info(f"Saved frame visualization to {save_path}")
         
         # Process frames
         image_processor = VivitImageProcessor(
@@ -276,9 +278,7 @@ def main():
             model,
             device,
             args.num_frames,
-            args.fps,
             args.sampling_method,
-            args.stride,
             logger,
             args.save_viz
         )
@@ -315,8 +315,6 @@ python3 vivit_transformer/inference.py \
   --video_path artifacts/laryngeal_dataset_iqm_filtered:v0/dataset/val/referral/0088_processed.mp4 \
   --model_path vivit-models/20250228_123221_vivit-classifier_best_model.pth \
   --num_frames 32 \
-  --fps 8 \
   --sampling_method uniform \
-  --stride 0.5 \
   --save_viz
 """
