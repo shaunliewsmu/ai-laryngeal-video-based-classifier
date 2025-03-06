@@ -189,9 +189,9 @@ python3 resnet50-3d-video/main.py \
 --test_data_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
 --log_dir logs \
 --model_dir resnet50-3d-video-models \
---train_sampling random_window \
+--train_sampling uniform \
 --val_sampling uniform \
---test_sampling random_window \
+--test_sampling uniform \
 --num_frames 32 \
 --batch_size 2 \
 --epochs 30 \

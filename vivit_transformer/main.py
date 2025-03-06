@@ -192,8 +192,8 @@ python3 vivit_transformer/main.py \
   --test_data_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
   --log_dir logs \
   --model_dir vivit-models \
-  --train_sampling random \
-  --val_sampling random_window \
+  --train_sampling uniform \
+  --val_sampling uniform \
   --test_sampling uniform \
   --num_frames 32 \
   --batch_size 4 \

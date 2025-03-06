@@ -233,7 +233,7 @@ python3 resnet50-2d-lstm/main.py \
     --test_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
     --log_dir logs \
     --model_dir resnet50-2d-lstm-models \
-    --train_sampling random_window \
+    --train_sampling uniform \
     --val_sampling uniform \
     --test_sampling uniform \
     --batch_size 4 \

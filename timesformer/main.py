@@ -202,7 +202,7 @@ python3 timesformer/main.py \
   --test_data_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
   --log_dir logs \
   --model_dir timesformer-models \
-  --train_sampling random \
+  --train_sampling uniform \
   --val_sampling uniform \
   --test_sampling uniform \
   --num_frames 32 \

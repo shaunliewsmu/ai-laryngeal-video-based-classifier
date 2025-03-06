@@ -206,7 +206,7 @@ python3 videoswintransformer/main.py \
   --model_dir swin3d-models \
   --model_size tiny \
   --pretrained \
-  --train_sampling random_window \
+  --train_sampling uniform \
   --val_sampling uniform \
   --test_sampling uniform \
   --num_frames 32 \
