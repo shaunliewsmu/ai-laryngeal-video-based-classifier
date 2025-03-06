@@ -61,7 +61,20 @@ screen -r training
 If you have multiple screen sessions and aren't sure which one is which, you can use screen -ls to see all sessions and their IDs, then attach to a specific one with:
 
 ```bash
+
 screen -r [session_id]
+```
+
+Kill a specific session
+
+```bash
+screen -X -S [session_name] quit
+```
+
+Or forcefully terminate
+
+```bash
+screen -S [session_name] -X quit
 ```
 
 Additional useful commands:
