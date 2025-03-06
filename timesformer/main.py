@@ -82,7 +82,7 @@ def main():
     
     try:
         # Set device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {device}")
         
         # Set memory optimization for CUDA
@@ -185,7 +185,7 @@ def main():
         )
         auroc, f1, conf_matrix = evaluator.evaluate()
         logger.info(f"Model evaluation completed. AUROC: {auroc:.4f}, F1: {f1:.4f}")
-        
+        logger.info(f"Comprehensive evaluation metrics visualization saved to {exp_logger.get_experiment_dir() / 'evaluation_metrics.png'}")
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}", exc_info=True)
         raise
