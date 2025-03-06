@@ -197,7 +197,7 @@ python3 vivit_transformer/main.py \
   --test_sampling uniform \
   --num_frames 32 \
   --batch_size 4 \
-  --epochs 1 \
+  --epochs 30 \
   --learning_rate 0.001 \
   --weight_decay 0.01 \
   --num_workers 4 \
