@@ -103,14 +103,21 @@ class VideoDataset(Dataset):
             # Get original video FPS for proper time scaling
             cap = cv2.VideoCapture(video_path)
             original_fps = cap.get(cv2.CAP_PROP_FPS)
-            duration = total_frames / original_fps  # in seconds
             cap.release()
+            
+            # Check for invalid FPS value
+            if original_fps <= 0:
+                # Use default FPS and log warning
+                self.logger.warning(f"Invalid FPS value ({original_fps}) for video {video_path}, using default 30 fps")
+                original_fps = 30.0
+                
+            duration = total_frames / original_fps  # in seconds
             
             # Calculate optimal sampling rate to get the exact number of frames requested
             dynamic_fps = self.num_frames / duration
             
             self.logger.info(f"Dynamic FPS adjustment: Video {video_path} has {total_frames} frames, "
-                          f"adjusted from {self.fps} to {dynamic_fps:.2f} fps to get {self.num_frames} frames.")
+                          f"adjusted from {original_fps} to {dynamic_fps:.2f} fps to get {self.num_frames} frames.")
             
             # Use the sampling method with the adjusted parameters
             if self.sampling_method == 'random':
@@ -184,15 +191,27 @@ class VideoDataset(Dataset):
             
             # Load video using PyTorchVideo
             video = EncodedVideo.from_path(video_path)
+            
+            # Fallback duration if not available from video
             duration = video.duration or 10.0
             
             clips = []
             labels = []
             
+            # Get original FPS from video
+            cap = cv2.VideoCapture(video_path)
+            original_fps = cap.get(cv2.CAP_PROP_FPS)
+            cap.release()
+            
+            # Check for invalid FPS
+            if original_fps <= 0:
+                self.logger.warning(f"Invalid FPS value ({original_fps}) for video {video_path}, using default 30 fps")
+                original_fps = 30.0
+            
             # Calculate start and end time from frame indices
             # We need to convert from frame index to timestamp
-            start_sec = max(0, frame_indices[0] / self.fps)
-            end_sec = min(duration, (frame_indices[-1] + 1) / self.fps)
+            start_sec = max(0, frame_indices[0] / original_fps)
+            end_sec = min(duration, (frame_indices[-1] + 1) / original_fps)
             
             # Get the clip
             try:

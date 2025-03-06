@@ -83,7 +83,7 @@ def main():
     
     try:
         # Set device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {device}")
         
         # Create model
@@ -95,9 +95,9 @@ def main():
         )
         
         # Handle multi-GPU
-        if torch.cuda.device_count() > 1:
-            logger.info(f"Using {torch.cuda.device_count()} GPUs!")
-            model = nn.DataParallel(model)
+        # if torch.cuda.device_count() > 1:
+        #     logger.info(f"Using {torch.cuda.device_count()} GPUs!")
+        #     model = nn.DataParallel(model)
         model = model.to(device)
         
         # Create dataloaders
@@ -200,8 +200,8 @@ if __name__ == "__main__":
     
 """
 python3 videoswintransformer/main.py \
-  --data_dir artifacts/laryngeal_dataset_balanced:v0/dataset \
-  --test_data_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset \
+  --data_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
+  --test_data_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
   --log_dir logs \
   --model_dir swin3d-models \
   --model_size tiny \
@@ -211,7 +211,7 @@ python3 videoswintransformer/main.py \
   --test_sampling uniform \
   --num_frames 32 \
   --batch_size 2 \
-  --epochs 40 \
+  --epochs 1 \
   --learning_rate 0.0001 \
   --weight_decay 0.05 \
   --num_workers 2 \

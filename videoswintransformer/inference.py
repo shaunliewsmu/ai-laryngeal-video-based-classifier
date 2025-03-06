@@ -140,13 +140,19 @@ def get_sampling_indices(video_path, total_frames, num_frames, sampling_method, 
         # Get original video FPS for proper time scaling
         cap = cv2.VideoCapture(video_path)
         original_fps = cap.get(cv2.CAP_PROP_FPS)
-        duration = total_frames / original_fps  # in seconds
         cap.release()
+        
+        # Check for invalid FPS value
+        if original_fps <= 0:
+            logger.warning(f"Invalid FPS value ({original_fps}) for video {video_path}, using default 30 fps")
+            original_fps = 30.0
+            
+        duration = total_frames / original_fps  # in seconds
         
         # Calculate optimal sampling rate to get the exact number of frames requested
         dynamic_fps = num_frames / duration
         
-        logger.info(f"Dynamic FPS adjustment: Video has {total_frames} frames, "
+        logger.info(f"Dynamic FPS adjustment: Video {video_path} has {total_frames} frames, "
                   f"adjusted from {original_fps} to {dynamic_fps:.2f} fps to get {num_frames} frames.")
         
         # Use the sampling method with the adjusted parameters
@@ -300,6 +306,13 @@ def predict_video(video_path, model, transform, device, args, viz_dir, logger):
         
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         original_fps = cap.get(cv2.CAP_PROP_FPS)
+        
+        # Check for invalid FPS value
+        if original_fps <= 0:  
+            # Use a default fallback FPS
+            logger.warning(f"Invalid FPS value ({original_fps}), using default 30 FPS")
+            original_fps = 30.0
+            
         cap.release()
         
         # Get frame indices using our sampling method
@@ -327,11 +340,6 @@ def predict_video(video_path, model, transform, device, args, viz_dir, logger):
         video = EncodedVideo.from_path(video_path)
         
         # Calculate clip duration from frame indices
-        # This assumes constant framerate throughout the video
-        if original_fps <= 0:  # Ensure FPS is valid
-                # Use a default fallback FPS if needed
-                logger.warning(f"Invalid FPS value ({original_fps}), using default 30 FPS")
-                original_fps = 30.0
         start_sec = frame_indices[0] / original_fps
         end_sec = (frame_indices[-1] + 1) / original_fps
         
@@ -452,7 +460,7 @@ if __name__ == "__main__":
 """
 python3 videoswintransformer/inference.py \
   --video_path artifacts/laryngeal_dataset_balanced:v0/dataset/val/referral/0047.mp4 \
-  --model_path swin3d-models/20250225_162321_swin3d-tiny_best_model.pth \
+  --model_path swin3d-models/20250306_115533_swin3d-tiny_best_model.pth \
   --model_size tiny \
   --num_frames 32 \
   --sampling_method random_window \
