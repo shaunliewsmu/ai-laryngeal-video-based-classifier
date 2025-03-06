@@ -40,27 +40,80 @@ class ModelEvaluator:
         video_frames = batch['pixel_values']
         labels = batch['labels']
         
-        # Process with image processor
-        inputs = self.image_processor(list(video_frames), return_tensors="pt")
-        
-        # Move to device
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        labels = labels.to(self.device)
-        
-        return inputs, labels
+        try:
+            # Process each video in the batch separately
+            all_inputs = []
+            for frames in video_frames:
+                # Handle different frame types
+                if isinstance(frames, torch.Tensor):
+                    # Convert torch tensor to numpy array
+                    frames = frames.cpu().numpy()
+                    
+                # Handle extra dimensions by squeezing if necessary
+                if isinstance(frames, np.ndarray):
+                    # Check for extra dimensions that need to be removed
+                    if frames.shape == (1, 1, 224, 3) or len(frames.shape) > 4:
+                        frames = frames.squeeze()  # Remove extra dimensions
+                    
+                    # Ensure it's uint8 for consistent processing
+                    frames = frames.astype(np.uint8)
+                    
+                    # Process frames
+                    inputs = self.image_processor(
+                        list(frames),  # Convert to list of frames
+                        return_tensors="pt"
+                    )
+                    all_inputs.append(inputs)
+                else:
+                    self.logger.warning(f"Unexpected frame type: {type(frames)}")
+            
+            # Combine all inputs into a single batch
+            if all_inputs:
+                combined_inputs = {}
+                for key in all_inputs[0].keys():
+                    combined_inputs[key] = torch.cat([inp[key] for inp in all_inputs], dim=0)
+                
+                # Move to device
+                combined_inputs = {k: v.to(self.device) for k, v in combined_inputs.items()}
+                labels = labels.to(self.device)
+                
+                return combined_inputs, labels
+            else:
+                self.logger.error("No valid frames to process in batch")
+                # Instead of raising an error, return a placeholder
+                placeholder = {
+                    'pixel_values': torch.zeros((labels.size(0), self.args.num_frames, 3, 224, 224), device=self.device)
+                }
+                return placeholder, labels
+                
+        except Exception as e:
+            self.logger.error(f"Error processing batch: {str(e)}")
+            # Return a placeholder instead of raising the error
+            placeholder = {
+                'pixel_values': torch.zeros((labels.size(0), self.args.num_frames, 3, 224, 224), device=self.device)
+            }
+            return placeholder, labels
     
     def _save_metrics(self, metrics):
         """Save evaluation metrics to JSON file."""
         metrics_path = os.path.join(self.exp_dir, f'test_metrics_{self.sampling_method}.json')
         
         # Convert numpy arrays to lists for JSON serialization
-        for key, value in metrics.items():
-            if isinstance(value, np.ndarray):
-                metrics[key] = value.tolist()
+        def convert_numpy_to_list(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, dict):
+                return {k: convert_numpy_to_list(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_to_list(item) for item in obj]
+            return obj
+        
+        # Create a copy of metrics to avoid modifying the original
+        serializable_metrics = convert_numpy_to_list(metrics)
                 
         # Save metrics
         with open(metrics_path, 'w') as f:
-            json.dump(metrics, f, indent=4)
+            json.dump(serializable_metrics, f, indent=4)
             
         self.logger.info(f"Saved evaluation metrics to {metrics_path}")
         

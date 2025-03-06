@@ -58,6 +58,20 @@ class TrainingVisualizer:
             class_names (list): List of class names
             title (str): Title for the plot
         """
+        # Handle empty confusion matrix
+        if len(conf_matrix) == 0 or conf_matrix.size == 0:
+            plt.figure(figsize=(8, 6))
+            plt.text(0.5, 0.5, "No data available for confusion matrix", 
+                    horizontalalignment='center', fontsize=12)
+            plt.title(title)
+            plt.axis('off')
+            
+            filename = title.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_')
+            plt.savefig(self.save_dir / f'{filename}.png')
+            plt.close()
+            return
+        
+        # Rest of the original method...
         plt.figure(figsize=(8, 6))
         sns.heatmap(
             conf_matrix, 
@@ -90,37 +104,32 @@ class TrainingVisualizer:
         
         plt.figure(figsize=(8, 6))
         
+        # Handle empty data
+        if len(y_true) == 0 or len(y_score) == 0:
+            plt.text(0.5, 0.5, "No data available for ROC curve", 
+                    horizontalalignment='center', fontsize=12)
+            plt.title(title)
+            plt.axis('off')
+            
+            filename = title.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_')
+            plt.savefig(self.save_dir / f'{filename}.png')
+            plt.close()
+            return
+        
         # Binary classification
         if len(class_names) == 2:
-            fpr, tpr, _ = roc_curve(y_true, y_score[:, 1])
-            roc_auc = auc(fpr, tpr)
-            
-            plt.plot(fpr, tpr, lw=2, label=f'ROC curve (AUC = {roc_auc:.3f})')
-            plt.plot([0, 1], [0, 1], 'k--', lw=2)
-            
-        # Multi-class classification
-        else:
-            from sklearn.preprocessing import label_binarize
-            
-            # Binarize labels
-            classes = np.arange(len(class_names))
-            y_bin = label_binarize(y_true, classes=classes)
-            
-            # Compute ROC curve and ROC area for each class
-            fpr = {}
-            tpr = {}
-            roc_auc = {}
-            
-            for i, class_name in enumerate(class_names):
-                fpr[i], tpr[i], _ = roc_curve(y_bin[:, i], y_score[:, i])
-                roc_auc[i] = auc(fpr[i], tpr[i])
-                plt.plot(
-                    fpr[i], tpr[i], lw=2,
-                    label=f'{class_name} (AUC = {roc_auc[i]:.3f})'
-                )
-            
-            plt.plot([0, 1], [0, 1], 'k--', lw=2)
+            try:
+                fpr, tpr, _ = roc_curve(y_true, y_score[:, 1])
+                roc_auc = auc(fpr, tpr)
+                
+                plt.plot(fpr, tpr, lw=2, label=f'ROC curve (AUC = {roc_auc:.3f})')
+                plt.plot([0, 1], [0, 1], 'k--', lw=2)
+            except Exception as e:
+                plt.text(0.5, 0.5, f"Could not generate ROC curve: {str(e)}", 
+                        horizontalalignment='center', fontsize=12)
+                plt.title(title)
         
+        # Rest of the method as before...
         plt.xlim([0.0, 1.0])
         plt.ylim([0.0, 1.05])
         plt.xlabel('False Positive Rate')

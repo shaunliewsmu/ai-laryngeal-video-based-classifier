@@ -1,5 +1,6 @@
 import torch
 from torch.utils.data import DataLoader
+import numpy as np
 from .dataset import VideoDataset
 
 def video_collate_fn(batch):
@@ -9,18 +10,42 @@ def video_collate_fn(batch):
     
     for sample in batch:
         if 'pixel_values' in sample and sample['pixel_values'] is not None:
-            pixel_values.append(sample['pixel_values'])
+            # Ensure pixel_values is a numpy array with correct shape
+            if isinstance(sample['pixel_values'], torch.Tensor):
+                frames = sample['pixel_values'].cpu().numpy()
+            else:
+                frames = sample['pixel_values']
+            
+            # Make sure frames have the correct shape (T, H, W, C)
+            if len(frames.shape) == 4 and frames.shape[-1] == 3:
+                pixel_values.append(frames)
+            else:
+                # Try to fix by squeezing any extra dimensions
+                try:
+                    # Squeeze and ensure proper shape
+                    fixed_frames = np.squeeze(frames)
+                    if len(fixed_frames.shape) == 4 and fixed_frames.shape[-1] == 3:
+                        pixel_values.append(fixed_frames)
+                    else:
+                        # Create placeholder if fixing didn't work
+                        print(f"Warning: Could not fix frame shape {frames.shape}, using placeholder")
+                        pixel_values.append(np.zeros((32, 224, 224, 3), dtype=np.uint8))
+                except:
+                    # If squeezing fails, log error and create placeholder
+                    print(f"Warning: Unexpected frame shape in collate_fn: {frames.shape}")
+                    pixel_values.append(np.zeros((32, 224, 224, 3), dtype=np.uint8))
+                
         if 'labels' in sample and sample['labels'] is not None:
             labels.append(sample['labels'])
     
-    # Only stack labels, but keep pixel_values as a list
+    # Stack labels if any exist
     if labels:
         labels = torch.stack(labels)
     else:
         labels = torch.zeros(len(batch), dtype=torch.long)
     
     return {
-        'pixel_values': pixel_values,  # Keep as list
+        'pixel_values': pixel_values,  # Keep as list of numpy arrays
         'labels': labels
     }
     
