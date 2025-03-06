@@ -31,23 +31,39 @@ class TrainingVisualizer:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
         
         # Plot loss
-        ax1.plot(history['train_loss'], label='Training Loss')
-        ax1.plot(history['val_loss'], label='Validation Loss')
+        ax1.plot(history['train_loss'], label='Training Loss', color='#FF5733')
+        ax1.plot(history['val_loss'], label='Validation Loss', color='#33A2FF')
         ax1.set_xlabel('Epoch')
         ax1.set_ylabel('Loss')
+        ax1.set_title('Training and Validation Loss')
         ax1.legend()
-        ax1.grid(True)
+        ax1.grid(True, alpha=0.3)
+        
+        # Add early stopping and best model markers if epochs > 1
+        if len(history['val_loss']) > 1:
+            best_epoch = np.argmin(history['val_loss'])
+            ax1.axvline(x=best_epoch, color='green', linestyle='--', alpha=0.5, 
+                       label=f'Best model (epoch {best_epoch+1})')
+            ax1.plot(best_epoch, history['val_loss'][best_epoch], 'go', markersize=8)
         
         # Plot accuracy
-        ax2.plot(history['train_acc'], label='Training Accuracy')
-        ax2.plot(history['val_acc'], label='Validation Accuracy')
+        ax2.plot(history['train_acc'], label='Training Accuracy', color='#FF5733')
+        ax2.plot(history['val_acc'], label='Validation Accuracy', color='#33A2FF')
         ax2.set_xlabel('Epoch')
         ax2.set_ylabel('Accuracy')
+        ax2.set_title('Training and Validation Accuracy')
         ax2.legend()
-        ax2.grid(True)
+        ax2.grid(True, alpha=0.3)
+        
+        # Add best accuracy marker if epochs > 1
+        if len(history['val_acc']) > 1:
+            best_acc_epoch = np.argmax(history['val_acc'])
+            ax2.axvline(x=best_acc_epoch, color='green', linestyle='--', alpha=0.5,
+                       label=f'Best accuracy (epoch {best_acc_epoch+1})')
+            ax2.plot(best_acc_epoch, history['val_acc'][best_acc_epoch], 'go', markersize=8)
         
         plt.tight_layout()
-        plt.savefig(self.save_dir / 'training_history.png')
+        plt.savefig(self.save_dir / 'training_history.png', dpi=150)
         plt.close()
         
     def plot_confusion_matrix(self, conf_matrix, class_names=None):
@@ -55,22 +71,58 @@ class TrainingVisualizer:
         Plot confusion matrix.
         
         Args:
-            conf_matrix (np.ndarray): Confusion matrix
+            conf_matrix (np.ndarray or list): Confusion matrix
             class_names (list): List of class names
         """
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(
+        # Convert to numpy array if it's a list
+        if isinstance(conf_matrix, list):
+            conf_matrix = np.array(conf_matrix)
+            
+        plt.figure(figsize=(10, 8))
+        
+        # Calculate percentages for annotations
+        conf_matrix_norm = conf_matrix.astype('float') / conf_matrix.sum(axis=1)[:, np.newaxis]
+        conf_matrix_norm = np.nan_to_num(conf_matrix_norm)  # Replace NaN with 0
+        
+        # Create the heatmap
+        ax = sns.heatmap(
             conf_matrix, 
             annot=True, 
             fmt='d',
             cmap='Blues',
             xticklabels=class_names,
-            yticklabels=class_names
+            yticklabels=class_names,
+            linewidths=0.5
         )
-        plt.title('Confusion Matrix')
-        plt.ylabel('True Label')
-        plt.xlabel('Predicted Label')
-        plt.savefig(self.save_dir / 'confusion_matrix.png')
+        
+        # Add percentage annotations
+        for i in range(conf_matrix.shape[0]):
+            for j in range(conf_matrix.shape[1]):
+                if conf_matrix[i, j] > 0:
+                    ax.text(j + 0.5, i + 0.7, f'({conf_matrix_norm[i, j]:.1%})', 
+                        ha='center', va='center', color='black', fontsize=9)
+        
+        # Calculate and display metrics
+        if conf_matrix.shape == (2, 2):  # Binary classification
+            try:
+                tn, fp, fn, tp = conf_matrix.ravel()
+                accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+                f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+                
+                plt.figtext(0.5, 0.01, 
+                        f"Accuracy: {accuracy:.2f} | Precision: {precision:.2f} | Recall: {recall:.2f} | F1: {f1:.2f}", 
+                        ha="center", fontsize=10, 
+                        bbox={"facecolor":"lightgray", "alpha":0.5, "pad":5})
+            except Exception as e:
+                print(f"Error calculating metrics: {e}")
+        
+        plt.title('Confusion Matrix', fontsize=14, pad=20)
+        plt.ylabel('True Label', fontsize=12)
+        plt.xlabel('Predicted Label', fontsize=12)
+        plt.tight_layout()
+        plt.savefig(self.save_dir / 'confusion_matrix.png', dpi=150, bbox_inches='tight')
         plt.close()
         
     def plot_sample_predictions(self, images, true_labels, pred_labels, class_names=None):
@@ -84,42 +136,64 @@ class TrainingVisualizer:
             class_names (list): List of class names
         """
         num_samples = min(len(images), 5)  # Show up to 5 samples
+        
+        # Create a figure with a row for each sample
         fig, axes = plt.subplots(num_samples, 1, figsize=(10, 4*num_samples))
+        fig.suptitle('Sample Predictions', fontsize=16, y=0.98)
         
         if num_samples == 1:
             axes = [axes]
             
         for i in range(num_samples):
             try:
-                # Get middle frame from the video clip
+                # Get multiple frames from the video clip to show temporal aspect
                 # Expecting shape (C, T, H, W)
                 video = images[i]
-                middle_frame_idx = video.shape[1] // 2
-                middle_frame = video[:, middle_frame_idx, :, :]  # Shape: (C, H, W)
+                T = video.shape[1]
                 
-                # Convert to numpy and rescale to [0,1]
-                middle_frame = middle_frame.cpu().numpy()
-                middle_frame = (middle_frame - middle_frame.min()) / (middle_frame.max() - middle_frame.min())
+                # Choose frames to display (start, middle, end)
+                frame_indices = [0, T//4, T//2, 3*T//4, T-1]
+                frame_indices = [idx for idx in frame_indices if idx < T]
                 
-                # Transpose from (C,H,W) to (H,W,C) for matplotlib
-                middle_frame = middle_frame.transpose(1, 2, 0)
+                # Create a grid of frames
+                n_frames = len(frame_indices)
+                for j, frame_idx in enumerate(frame_indices):
+                    # Get the frame
+                    frame = video[:, frame_idx, :, :]  # Shape: (C, H, W)
+                    
+                    # Convert to numpy and rescale to [0,1]
+                    frame = frame.cpu().numpy()
+                    frame = (frame - frame.min()) / (frame.max() - frame.min() + 1e-8)
+                    
+                    # Transpose from (C,H,W) to (H,W,C) for matplotlib
+                    frame = frame.transpose(1, 2, 0)
+                    
+                    # Create subplot within the sample's row
+                    sub_ax = axes[i].inset_axes([j/n_frames, 0, 1/n_frames, 1])
+                    sub_ax.imshow(frame)
+                    sub_ax.axis('off')
+                    sub_ax.set_title(f'Frame {frame_idx}', fontsize=9)
                 
-                axes[i].imshow(middle_frame)
-                
+                # Get labels
                 true_label = class_names[true_labels[i]] if class_names else true_labels[i]
                 pred_label = class_names[pred_labels[i]] if class_names else pred_labels[i]
                 
-                title = f'True: {true_label} | Predicted: {pred_label}'
+                # Set title for the row
+                title = f'Video {i+1}: True: {true_label} | Predicted: {pred_label}'
                 color = 'green' if true_labels[i] == pred_labels[i] else 'red'
-                axes[i].set_title(title, color=color)
+                axes[i].set_title(title, color=color, fontsize=12)
                 axes[i].axis('off')
                 
             except Exception as e:
                 print(f"Error plotting sample {i}: {str(e)}")
+                axes[i].text(0.5, 0.5, f"Error displaying sample: {str(e)}", 
+                           horizontalalignment='center', verticalalignment='center',
+                           transform=axes[i].transAxes, color='red')
+                axes[i].axis('off')
                 continue
             
         plt.tight_layout()
-        plt.savefig(self.save_dir / 'sample_predictions.png')
+        plt.savefig(self.save_dir / 'sample_predictions.png', dpi=150, bbox_inches='tight')
         plt.close()
     
     def visualize_sampling(self, video_path, sampling_method, num_frames, save_path, title=''):
