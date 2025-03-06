@@ -2,7 +2,6 @@ import argparse
 import torch
 import os
 import glob
-import logging
 import pandas as pd
 from tqdm import tqdm
 import cv2
@@ -11,11 +10,12 @@ from pathlib import Path
 import json
 from datetime import datetime
 
-from src.models.model import VideoResNet50LSTM 
-from src.utils.logging_utils import setup_logging, create_directories
+from src.models.model import VideoResNet50LSTM
+from src.utils.logger import ExperimentLogger
+from src.utils.visualization import EnhancedVisualizer
 from src.config.config import DEFAULT_CONFIG
 
-class VideoInference:
+class EnhancedVideoInference:
     def __init__(self, model_path, sampling_method='uniform', sequence_length=32, device='cuda'):
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         self.sequence_length = sequence_length
@@ -64,7 +64,7 @@ class VideoInference:
         cap.release()
         
         if not ret:
-            logging.warning(f"Could not read frame {frame_idx}, using placeholder")
+            print(f"Could not read frame {frame_idx}, using placeholder")
             frame = np.zeros((224, 224, 3), dtype=np.uint8)
         
         # Convert BGR to RGB
@@ -79,8 +79,13 @@ class VideoInference:
         # Ensure num_frames doesn't exceed total_frames
         num_frames = min(num_frames, total_frames)
         
-        # Random sampling without replacement
-        frame_indices = sorted(np.random.choice(total_frames, num_frames, replace=False))
+        # Random sampling without replacement if possible
+        if total_frames >= num_frames:
+            frame_indices = sorted(np.random.choice(total_frames, num_frames, replace=False))
+        else:
+            # If total_frames < num_frames, sample with replacement
+            frame_indices = sorted(np.random.choice(total_frames, num_frames, replace=True))
+            
         return frame_indices
     
     def uniform_sampling(self, total_frames, num_frames):
@@ -91,11 +96,16 @@ class VideoInference:
         if num_frames == 1:
             return [total_frames // 2]  # Middle frame
         
-        # Calculate step size
-        step = (total_frames - 1) / (num_frames - 1)
-        
-        # Generate evenly spaced indices
-        frame_indices = [min(int(i * step), total_frames - 1) for i in range(num_frames)]
+        if total_frames >= num_frames:
+            # Calculate step size for uniform sampling
+            step = (total_frames - 1) / (num_frames - 1)
+            frame_indices = [min(int(i * step), total_frames - 1) for i in range(num_frames)]
+        else:
+            # For shorter videos, we might need to duplicate frames
+            # Create evenly spaced indices that might include duplicates
+            step = total_frames / num_frames
+            frame_indices = [min(int(i * step), total_frames - 1) for i in range(num_frames)]
+            
         return frame_indices
     
     def random_window_sampling(self, total_frames, num_frames):
@@ -119,7 +129,7 @@ class VideoInference:
         
         return frame_indices
     
-    def predict_video(self, video_path):
+    def predict_video(self, video_path, visualizer=None, viz_dir=None):
         try:
             # Get video properties
             total_frames, fps, duration_sec, width, height = self.get_video_properties(video_path)
@@ -131,6 +141,19 @@ class VideoInference:
                 frame_indices = self.random_window_sampling(total_frames, self.sequence_length)
             else:  # default to uniform
                 frame_indices = self.uniform_sampling(total_frames, self.sequence_length)
+            
+            # Visualize sampling if requested
+            if visualizer and viz_dir:
+                Path(viz_dir).mkdir(parents=True, exist_ok=True)
+                viz_path = Path(viz_dir) / f'inference_sampling_{Path(video_path).stem}.png'
+                visualizer.visualize_sampling(
+                    video_path, 
+                    self.sampling_method, 
+                    self.sequence_length, 
+                    viz_path, 
+                    f"Inference Sampling"
+                )
+                print(f"Saved sampling visualization to {viz_path}")
             
             # Extract frames
             frames = []
@@ -165,10 +188,13 @@ class VideoInference:
                 'video_path': video_path,
                 'prediction': prediction,
                 'probability': float(probability),
+                'sampled_frames': len(frame_indices),
+                'total_frames': total_frames,
+                'frame_indices': frame_indices,
                 'status': 'success'
             }
         except Exception as e:
-            logging.error(f"Error processing video {video_path}: {str(e)}")
+            print(f"Error processing video {video_path}: {str(e)}")
             return {
                 'video_path': video_path,
                 'prediction': None,
@@ -177,7 +203,7 @@ class VideoInference:
             }
 
 def main():
-    parser = argparse.ArgumentParser(description='Inference script for laryngeal cancer video classification')
+    parser = argparse.ArgumentParser(description='Enhanced inference for ResNet50-LSTM laryngeal cancer classification')
     parser.add_argument('--videos_dir', type=str, required=True,
                         help='Directory containing videos to process')
     parser.add_argument('--model_path', type=str, required=True,
@@ -189,38 +215,77 @@ def main():
                         help='Frame sampling method')
     parser.add_argument('--sequence_length', type=int, default=32,
                         help='Number of frames to sample from each video')
+    parser.add_argument('--visualize', action='store_true',
+                        help='Enable detailed result visualization')
+    parser.add_argument('--batch_mode', action='store_true',
+                        help='Process all videos in the directory')
+    parser.add_argument('--single_video', type=str, default=None,
+                        help='Path to a single video for inference (overrides videos_dir)')
     args = parser.parse_args()
 
-    # Create output directory
-    create_directories(args.output_dir)
+    # Create experiment logger
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_path = os.path.join(args.output_dir, f'inference_{timestamp}')
-    setup_logging(os.path.join(log_path, 'inference.log'))
+    exp_logger = ExperimentLogger(
+        os.path.join(args.output_dir, f'inference_{timestamp}'),
+        prefix='inference'
+    )
+    logger = exp_logger.get_logger()
+    
+    # Initialize visualizer if needed
+    if args.visualize:
+        viz_dir = exp_logger.get_visualization_dir()
+        visualizer = EnhancedVisualizer(viz_dir)
+    else:
+        viz_dir = None
+        visualizer = None
     
     # Initialize inference class
-    inference = VideoInference(
+    inference = EnhancedVideoInference(
         model_path=args.model_path,
         sampling_method=args.sampling_method,
-        sequence_length=args.sequence_length
+        sequence_length=args.sequence_length,
+        device='cuda' if torch.cuda.is_available() else 'cpu'
     )
 
-    # Get all video files
-    video_extensions = ('*.mp4', '*.avi', '*.mov')
-    video_files = []
-    for ext in video_extensions:
-        video_files.extend(glob.glob(os.path.join(args.videos_dir, '**', ext), recursive=True))
+    # Get videos to process
+    if args.single_video:
+        if os.path.exists(args.single_video):
+            video_files = [args.single_video]
+        else:
+            logger.error(f"Video file not found: {args.single_video}")
+            return
+    elif args.batch_mode:
+        video_extensions = ('*.mp4', '*.avi', '*.mov')
+        video_files = []
+        for ext in video_extensions:
+            video_files.extend(glob.glob(os.path.join(args.videos_dir, '**', ext), recursive=True))
+    else:
+        video_files = []
+        for dir_name in ['referral', 'non_referral']:
+            dir_path = os.path.join(args.videos_dir, dir_name)
+            if os.path.exists(dir_path):
+                video_files.extend(glob.glob(os.path.join(dir_path, '*.mp4')))
 
     if not video_files:
-        logging.error(f"No video files found in {args.videos_dir}")
+        logger.error(f"No video files found to process")
         return
 
-    logging.info(f"Found {len(video_files)} videos to process")
+    logger.info(f"Found {len(video_files)} videos to process")
 
     # Process videos
     results = []
     for video_path in tqdm(video_files, desc="Processing videos"):
-        result = inference.predict_video(video_path)
+        result = inference.predict_video(video_path, visualizer, viz_dir)
         results.append(result)
+        
+        # Print the result
+        if result['status'] == 'success':
+            confidence = result['probability'] if result['prediction'] == 'referral' else 1 - result['probability']
+            logger.info(f"Video: {os.path.basename(video_path)}, "
+                      f"Prediction: {result['prediction']}, "
+                      f"Confidence: {confidence:.4f}")
+        else:
+            logger.error(f"Error processing {os.path.basename(video_path)}: {result['status']}")
 
     # Create summary
     successful_predictions = [r for r in results if r['status'] == 'success']
@@ -235,47 +300,81 @@ def main():
             'successful_predictions': len(successful_predictions),
             'failed_predictions': len(failed_predictions),
             'referral_cases': referral_count,
-            'non_referral_cases': non_referral_count
+            'non_referral_cases': non_referral_count,
+            'sampling_method': args.sampling_method,
+            'sequence_length': args.sequence_length,
+            'model_path': args.model_path
         }
 
         # Save results as CSV files
-        csv_prefix = os.path.join(log_path, 'inference_results')
         results_df = pd.DataFrame(successful_predictions)
-        results_df.to_csv(f'{csv_prefix}_successful.csv', index=False)
+        results_df.to_csv(os.path.join(exp_logger.get_experiment_dir(), 'inference_results.csv'), index=False)
         
         if failed_predictions:
             failed_df = pd.DataFrame(failed_predictions)
-            failed_df.to_csv(f'{csv_prefix}_failed.csv', index=False)
+            failed_df.to_csv(os.path.join(exp_logger.get_experiment_dir(), 'inference_failures.csv'), index=False)
         
-        # Save summary as CSV
-        pd.DataFrame([summary]).to_csv(f'{csv_prefix}_summary.csv', index=False)
+        # Save summary as both JSON and CSV
+        with open(os.path.join(exp_logger.get_experiment_dir(), 'inference_summary.json'), 'w') as f:
+            json.dump(summary, f, indent=4)
+        
+        pd.DataFrame([summary]).to_csv(os.path.join(exp_logger.get_experiment_dir(), 'inference_summary.csv'), index=False)
 
-        # Save detailed JSON
-        json_path = os.path.join(log_path, 'inference_results.json')
-        with open(json_path, 'w') as f:
-            json.dump({
-                'summary': summary,
-                'predictions': successful_predictions,
-                'failures': failed_predictions
-            }, f, indent=4)
+        # Visualize results distribution if visualizer is available
+        if visualizer:
+            try:
+                import matplotlib.pyplot as plt
+                
+                # Create prediction distribution pie chart
+                plt.figure(figsize=(10, 6))
+                plt.pie([non_referral_count, referral_count], 
+                       labels=['Non-Referral', 'Referral'],
+                       autopct='%1.1f%%', 
+                       colors=['#3498db', '#e74c3c'],
+                       explode=(0.05, 0.05))
+                plt.title('Prediction Distribution')
+                plt.savefig(os.path.join(viz_dir, 'prediction_distribution.png'), dpi=150, bbox_inches='tight')
+                plt.close()
+                
+                # Create confidence histogram
+                plt.figure(figsize=(10, 6))
+                confidence_values = [r['probability'] if r['prediction'] == 'referral' else 1-r['probability'] 
+                                   for r in successful_predictions]
+                plt.hist(confidence_values, bins=20, color='skyblue', edgecolor='black')
+                plt.xlabel('Confidence')
+                plt.ylabel('Count')
+                plt.title('Prediction Confidence Distribution')
+                plt.axvline(x=0.5, color='red', linestyle='--', label='Threshold')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.savefig(os.path.join(viz_dir, 'confidence_distribution.png'), dpi=150, bbox_inches='tight')
+                plt.close()
+                
+            except Exception as e:
+                logger.error(f"Error creating visualization: {str(e)}")
 
         # Print summary
-        logging.info("\nInference Summary:")
-        logging.info(f"Total videos processed: {len(results)}")
-        logging.info(f"Successful predictions: {len(successful_predictions)}")
-        logging.info(f"Failed predictions: {len(failed_predictions)}")
-        logging.info(f"Referral cases: {referral_count}")
-        logging.info(f"Non-referral cases: {non_referral_count}")
-        logging.info(f"\nResults saved to {log_path}")
+        logger.info("\nInference Summary:")
+        logger.info(f"Total videos processed: {len(results)}")
+        logger.info(f"Successful predictions: {len(successful_predictions)}")
+        logger.info(f"Failed predictions: {len(failed_predictions)}")
+        logger.info(f"Referral cases: {referral_count}")
+        logger.info(f"Non-referral cases: {non_referral_count}")
+        logger.info(f"Results saved to {exp_logger.get_experiment_dir()}")
+    else:
+        logger.error("No successful predictions were made")
 
 if __name__ == "__main__":
     main()
     
 """
+Example usage:
 python3 resnet50-2d-lstm/inference.py \
-    --videos_dir artifacts/laryngeal_dataset_iqm_filtered:v0/dataset/val/non_referral \
+    --videos_dir artifacts/duhs-gss-split-5:v0/organized_dataset/test \
     --model_path resnet50-2d-lstm-models/model_20250304_170408.pth \
-    --output_dir resnet_inference_results \
+    --output_dir enhanced_inference_results \
     --sampling_method uniform \
-    --sequence_length 32
+    --sequence_length 32 \
+    --visualize \
+    --batch_mode
 """
