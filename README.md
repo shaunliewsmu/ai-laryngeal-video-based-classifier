@@ -10,36 +10,65 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-open `training.ipynb` and run the code accordingly.
+### Run the model training with Linux Screen
 
-## make sure that you have Weights and Bias Account ready to access all the saved artifacts and logs
+First, you'll need to create a new screen session:
 
-### Dataset Description:
+```bash
+screen -S training
+```
 
-Overall Distribution:
+This will open a new screen session named "training". Within this session, you can run your command:
 
+can change the training script command according to the model that you wanna train. 
 
-The dataset has an imbalanced class distribution
-Referral cases (Label 1): 66.67% of total data
-Non-referral cases (Label 0): 33.33% of total data
+```bash
+python3 resnet50-2d-lstm/main.py \
+    --data_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
+    --test_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
+    --log_dir logs \
+    --model_dir resnet50-2d-lstm-models \
+    --train_sampling random_window \
+    --val_sampling uniform \
+    --test_sampling uniform \
+    --batch_size 4 \
+    --epochs 1 \
+    --learning_rate 0.001 \
+    --patience 10 \
+    --loss_weight 0.3
+```
 
+Once your command is running, you can detach from the screen session without stopping the process by pressing:
 
-Split Distributions:
+```bash
+Ctrl+A followed by D
+```
 
-Training Set (92 videos, ~70% of total):
+You'll see a message like "[detached from session_name]" and you'll be returned to your normal SSH session. You can now safely disconnect from your SSH server.
 
-Referral: 61 videos (66.30%)
-Non-referral: 31 videos (33.70%)
-The class ratio closely matches the original distribution
+When you reconnect later, you can list all available screen sessions with:
 
-Validation Set (20 videos, ~15% of total):
+```bash
+screen -ls
+```
 
-Referral: 14 videos (70.00%)
-Non-referral: 6 videos (30.00%)
-Slightly higher proportion of referral cases compared to overall
+To reattach to your training session:
 
-Test Set (20 videos, ~15% of total):
+```bash
+screen -r training
+```
 
-Referral: 13 videos (65.00%)
-Non-referral: 7 videos (35.00%)
-Distribution very close to the original
+If you have multiple screen sessions and aren't sure which one is which, you can use screen -ls to see all sessions and their IDs, then attach to a specific one with:
+
+```bash
+screen -r [session_id]
+```
+
+Additional useful commands:
+
+```bash
+To create a new window within the same screen session: Ctrl+A then c
+To switch between windows: Ctrl+A then n (next) or p (previous)
+To kill a screen session (when attached): Ctrl+A then k
+To scroll within a screen session: Ctrl+A then [ (use arrow keys to scroll, press Esc to exit scroll mode)
+```

@@ -211,7 +211,7 @@ python3 videoswintransformer/main.py \
   --test_sampling uniform \
   --num_frames 32 \
   --batch_size 2 \
-  --epochs 1 \
+  --epochs 30 \
   --learning_rate 0.0001 \
   --weight_decay 0.05 \
   --num_workers 2 \

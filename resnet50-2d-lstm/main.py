@@ -237,7 +237,7 @@ python3 resnet50-2d-lstm/main.py \
     --val_sampling uniform \
     --test_sampling uniform \
     --batch_size 4 \
-    --epochs 1 \
+    --epochs 30 \
     --learning_rate 0.001 \
     --patience 10 \
     --loss_weight 0.3

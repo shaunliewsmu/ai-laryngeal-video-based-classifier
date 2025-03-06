@@ -194,7 +194,7 @@ python3 resnet50-3d-video/main.py \
 --test_sampling random_window \
 --num_frames 32 \
 --batch_size 2 \
---epochs 1 \
+--epochs 30 \
 --learning_rate 0.01 \
 --num_workers 2 \
 --patience 7
