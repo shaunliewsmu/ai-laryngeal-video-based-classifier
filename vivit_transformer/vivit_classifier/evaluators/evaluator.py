@@ -3,10 +3,12 @@ import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import (
     roc_auc_score, confusion_matrix, f1_score, 
-    roc_curve, precision_recall_curve, average_precision_score
+    roc_curve, precision_recall_curve, average_precision_score,
+    accuracy_score, recall_score, precision_score
 )
 import json
 import os
+from pathlib import Path
 from transformers import VivitImageProcessor
 
 class ModelEvaluator:
@@ -118,13 +120,16 @@ class ModelEvaluator:
         self.logger.info(f"Saved evaluation metrics to {metrics_path}")
         
     def evaluate(self):
-        """Evaluate the model on the test set."""
+        """Evaluate the model on the test set with enhanced visualization."""
         self.logger.info(f"Starting model evaluation using {self.sampling_method} sampling...")
         
         self.model.eval()
         all_labels = []
         all_preds = []
         all_probs = []
+        sample_inputs = []
+        sample_labels = []
+        sample_preds = []
         test_loss = 0.0
         test_correct = 0
         test_total = 0
@@ -136,7 +141,7 @@ class ModelEvaluator:
         criterion = torch.nn.CrossEntropyLoss()
         
         with torch.no_grad():
-            for batch in test_pbar:
+            for batch_idx, batch in enumerate(test_pbar):
                 try:
                     # Process batch
                     inputs, labels = self._process_batch(batch)
@@ -161,6 +166,15 @@ class ModelEvaluator:
                     all_labels.extend(labels.cpu().numpy())
                     all_preds.extend(predicted.cpu().numpy())
                     all_probs.extend(probs.cpu().numpy())
+                    
+                    # Store some samples for visualization (first batch only)
+                    if batch_idx == 0 and len(sample_inputs) < 5:
+                        # Store first few samples for visualization
+                        if 'pixel_values' in batch:
+                            for j in range(min(5, len(batch['pixel_values']))):
+                                sample_inputs.append(batch['pixel_values'][j])
+                                sample_labels.append(labels[j].cpu())
+                                sample_preds.append(predicted[j].cpu())
                     
                     # Update progress bar
                     batch_acc = batch_correct / batch_size
@@ -197,83 +211,191 @@ class ModelEvaluator:
         from vivit_classifier.utils.visualization import TrainingVisualizer
         visualizer = TrainingVisualizer(self.exp_dir)
         
-        visualizer.plot_confusion_matrix(
-            metrics['confusion_matrix'],
-            class_names=self.class_names,
-            title=f"Confusion Matrix ({self.sampling_method} sampling)"
-        )
-        
-        visualizer.plot_roc_curve(
-            all_labels,
-            all_probs,
-            class_names=self.class_names,
-            title=f"ROC Curve ({self.sampling_method} sampling)"
-        )
+        try:
+            # Create confusion matrix visualization
+            visualizer.plot_confusion_matrix(
+                metrics['confusion_matrix'],
+                class_names=self.class_names,
+                title=f"Confusion Matrix ({self.sampling_method} sampling)"
+            )
+            
+            # Create ROC curve visualization
+            visualizer.plot_roc_curve(
+                all_labels,
+                all_probs,
+                class_names=self.class_names,
+                title=f"ROC Curve ({self.sampling_method} sampling)"
+            )
+            
+            # Create comprehensive metrics visualization
+            metrics_viz_path = visualizer.plot_evaluation_metrics(
+                all_labels,
+                all_preds,
+                all_probs,
+                class_names=self.class_names,
+                sampling_method=self.sampling_method,
+                title=f"ViViT Evaluation ({self.sampling_method} sampling)"
+            )
+            self.logger.info(f"Comprehensive evaluation metrics visualization saved to {metrics_viz_path}")
+            
+            # Plot sample predictions if available
+            if sample_inputs and sample_labels and sample_preds:
+                visualizer.plot_sample_predictions(
+                    sample_inputs,
+                    sample_labels,
+                    sample_preds,
+                    self.class_names
+                )
+                self.logger.info("Sample predictions visualization created")
+                
+        except Exception as e:
+            self.logger.error(f"Error creating visualizations: {str(e)}")
         
         # Return key metrics
-        return metrics['auroc'], metrics['f1_score'], metrics['confusion_matrix']
+        return metrics.get('auroc', 0.0), metrics.get('f1_score', 0.0), metrics.get('confusion_matrix', np.array([]))
     
     def _calculate_metrics(self, labels, preds, probs):
-        """Calculate detailed evaluation metrics."""
+        """Calculate detailed evaluation metrics with error handling."""
         metrics = {}
         
-        # Calculate accuracy
-        metrics['accuracy'] = (preds == labels).mean()
+        # Handle empty predictions
+        if len(labels) == 0 or len(preds) == 0:
+            self.logger.warning("No valid predictions were made. Metrics cannot be calculated.")
+            metrics['accuracy'] = 0.0
+            metrics['f1_score'] = 0.0
+            metrics['auroc'] = 0.0
+            metrics['confusion_matrix'] = np.array([])
+            return metrics
         
-        # Calculate confusion matrix
-        metrics['confusion_matrix'] = confusion_matrix(labels, preds)
-        
-        # For binary classification
-        if len(self.class_names) == 2:
-            metrics['f1_score'] = f1_score(labels, preds)
+        try:
+            # Calculate accuracy
+            metrics['accuracy'] = accuracy_score(labels, preds)
             
-            # ROC AUC
-            if len(np.unique(labels)) > 1:  # Check if we have multiple classes in the test set
-                metrics['auroc'] = roc_auc_score(labels, probs[:, 1])
+            # Calculate confusion matrix
+            metrics['confusion_matrix'] = confusion_matrix(labels, preds)
+            
+            # For binary classification
+            if len(self.class_names) == 2:
+                # F1 score, precision, and recall
+                metrics['f1_score'] = f1_score(labels, preds, zero_division=0)
+                metrics['precision'] = precision_score(labels, preds, zero_division=0)
+                metrics['recall'] = recall_score(labels, preds, zero_division=0)
                 
-                # ROC curve
-                fpr, tpr, _ = roc_curve(labels, probs[:, 1])
-                metrics['roc_curve'] = {'fpr': fpr, 'tpr': tpr}
-                
-                # Precision-Recall curve
-                precision, recall, _ = precision_recall_curve(labels, probs[:, 1])
-                metrics['pr_curve'] = {'precision': precision, 'recall': recall}
-                metrics['average_precision'] = average_precision_score(labels, probs[:, 1])
+                # ROC AUC and Precision-Recall AUC
+                if len(np.unique(labels)) > 1 and len(probs) > 0:
+                    # Ensure probs is properly shaped for binary classification
+                    if len(probs.shape) > 1 and probs.shape[1] > 1:
+                        metrics['auroc'] = roc_auc_score(labels, probs[:, 1])
+                        
+                        # ROC curve data points
+                        fpr, tpr, thresholds = roc_curve(labels, probs[:, 1])
+                        metrics['roc_curve'] = {
+                            'fpr': fpr, 
+                            'tpr': tpr,
+                            'thresholds': thresholds
+                        }
+                        
+                        # Find optimal threshold (closest to top-left corner)
+                        optimal_idx = np.argmax(tpr - fpr)
+                        metrics['optimal_threshold'] = float(thresholds[optimal_idx])
+                        
+                        # Precision-Recall curve data points
+                        precision, recall, pr_thresholds = precision_recall_curve(labels, probs[:, 1])
+                        metrics['pr_curve'] = {
+                            'precision': precision,
+                            'recall': recall,
+                            'thresholds': pr_thresholds if len(pr_thresholds) > 0 else []
+                        }
+                        metrics['average_precision'] = average_precision_score(labels, probs[:, 1])
+                        
+                        # Calculate F1 scores for different thresholds to find the best
+                        if len(pr_thresholds) > 0:
+                            f1_scores = []
+                            for i in range(len(precision) - 1):  # precision has one more element than thresholds
+                                if precision[i] + recall[i] > 0:  # avoid division by zero
+                                    f1 = 2 * precision[i] * recall[i] / (precision[i] + recall[i])
+                                else:
+                                    f1 = 0
+                                f1_scores.append(f1)
+                            
+                            if f1_scores:
+                                best_f1_idx = np.argmax(f1_scores)
+                                if best_f1_idx < len(pr_thresholds):
+                                    metrics['best_f1_threshold'] = float(pr_thresholds[best_f1_idx])
+                    else:
+                        self.logger.warning("Probability array has incorrect shape for ROC calculation")
+                        metrics['auroc'] = 0.0
+                else:
+                    self.logger.warning("Only one class present in test set or no probabilities available")
+                    metrics['auroc'] = 0.0
+                    metrics['roc_curve'] = {'fpr': [0, 1], 'tpr': [0, 1], 'thresholds': [1, 0]}
+                    metrics['pr_curve'] = {'precision': [1, 0], 'recall': [0, 1], 'thresholds': []}
+                    metrics['average_precision'] = 0.0
+            
+            # For multi-class classification
             else:
-                self.logger.warning("Only one class present in test set, skipping ROC AUC calculation")
-                metrics['auroc'] = 0.0
-                metrics['roc_curve'] = {'fpr': [0, 1], 'tpr': [0, 1]}
-                metrics['pr_curve'] = {'precision': [0, 1], 'recall': [0, 1]}
-                metrics['average_precision'] = 0.0
-        
-        # For multi-class classification
-        else:
-            metrics['f1_score'] = f1_score(labels, preds, average='weighted')
-            
-            # One-vs-rest ROC AUC
-            metrics['class_auroc'] = {}
-            
-            # Convert labels to one-hot encoding
-            from sklearn.preprocessing import label_binarize
-            classes = np.arange(len(self.class_names))
-            y_bin = label_binarize(labels, classes=classes)
-            
-            if len(classes) > 2:
-                metrics['auroc'] = roc_auc_score(y_bin, probs, average='macro', multi_class='ovr')
+                metrics['f1_score'] = f1_score(labels, preds, average='weighted')
+                metrics['precision'] = precision_score(labels, preds, average='weighted', zero_division=0)
+                metrics['recall'] = recall_score(labels, preds, average='weighted', zero_division=0)
                 
-                # Class-wise AUROC
-                for i, class_name in enumerate(self.class_names):
-                    try:
-                        metrics['class_auroc'][class_name] = roc_auc_score(y_bin[:, i], probs[:, i])
-                    except:
-                        metrics['class_auroc'][class_name] = 0.0
-            else:
-                metrics['auroc'] = roc_auc_score(labels, probs[:, 1])
+                # One-vs-rest ROC AUC
+                if len(probs) > 0:
+                    from sklearn.preprocessing import label_binarize
+                    classes = np.arange(len(self.class_names))
+                    y_bin = label_binarize(labels, classes=classes)
+                    
+                    if len(classes) > 2:
+                        try:
+                            metrics['auroc'] = roc_auc_score(y_bin, probs, average='macro', multi_class='ovr')
+                        except Exception as e:
+                            self.logger.error(f"Error calculating multiclass AUROC: {str(e)}")
+                            metrics['auroc'] = 0.0
+                            
+                        # Class-wise AUROC
+                        metrics['class_auroc'] = {}
+                        for i, class_name in enumerate(self.class_names):
+                            try:
+                                metrics['class_auroc'][class_name] = roc_auc_score(y_bin[:, i], probs[:, i])
+                            except Exception as e:
+                                self.logger.error(f"Error calculating AUROC for class {class_name}: {str(e)}")
+                                metrics['class_auroc'][class_name] = 0.0
+                    else:
+                        try:
+                            metrics['auroc'] = roc_auc_score(labels, probs[:, 1])
+                        except Exception as e:
+                            self.logger.error(f"Error calculating binary AUROC: {str(e)}")
+                            metrics['auroc'] = 0.0
+                else:
+                    metrics['auroc'] = 0.0
+        
+        except Exception as e:
+            self.logger.error(f"Error calculating metrics: {str(e)}")
+            # Provide default values for required metrics
+            metrics['f1_score'] = 0.0
+            metrics['auroc'] = 0.0
+            if 'confusion_matrix' not in metrics:
+                metrics['confusion_matrix'] = np.array([])
+        
+        # Calculate additional derived metrics if possible
+        try:
+            cm = metrics['confusion_matrix']
+            if cm.shape == (2, 2):  # Binary classification
+                tn, fp, fn, tp = cm.ravel()
+                metrics['specificity'] = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+                metrics['npv'] = tn / (tn + fn) if (tn + fn) > 0 else 0.0  # Negative Predictive Value
+        except Exception as e:
+            self.logger.error(f"Error calculating derived metrics: {str(e)}")
         
         # Log metrics
-        self.logger.info(f"Accuracy: {metrics['accuracy']:.4f}")
-        self.logger.info(f"F1 Score: {metrics['f1_score']:.4f}")
-        self.logger.info(f"AUROC: {metrics['auroc']:.4f}")
-        self.logger.info(f"Confusion Matrix:\n{metrics['confusion_matrix']}")
+        self.logger.info(f"Accuracy: {metrics.get('accuracy', 0.0):.4f}")
+        self.logger.info(f"F1 Score: {metrics.get('f1_score', 0.0):.4f}")
+        self.logger.info(f"Precision: {metrics.get('precision', 0.0):.4f}")
+        self.logger.info(f"Recall: {metrics.get('recall', 0.0):.4f}")
+        self.logger.info(f"AUROC: {metrics.get('auroc', 0.0):.4f}")
+        
+        if 'specificity' in metrics:
+            self.logger.info(f"Specificity: {metrics.get('specificity', 0.0):.4f}")
+            
+        self.logger.info(f"Confusion Matrix:\n{metrics.get('confusion_matrix', np.array([]))}")
         
         return metrics

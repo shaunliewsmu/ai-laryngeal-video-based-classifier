@@ -80,7 +80,7 @@ def main():
     
     try:
         # Set device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {device}")
         
         # Create dataloaders with different sampling methods for each split
@@ -174,7 +174,8 @@ def main():
         )
         auroc, f1, conf_matrix = evaluator.evaluate()
         logger.info(f"Model evaluation completed. AUROC: {auroc:.4f}, F1: {f1:.4f}")
-        
+        logger.info(f"Comprehensive evaluation metrics visualization saved to {exp_logger.get_experiment_dir() / 'evaluation_metrics.png'}")
+        logger.info(f"Sample predictions visualization saved to {exp_logger.get_experiment_dir() / 'sample_predictions.png'}")
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}", exc_info=True)
         raise
@@ -196,7 +197,7 @@ python3 vivit_transformer/main.py \
   --test_sampling uniform \
   --num_frames 32 \
   --batch_size 4 \
-  --epochs 40 \
+  --epochs 1 \
   --learning_rate 0.001 \
   --weight_decay 0.01 \
   --num_workers 4 \
