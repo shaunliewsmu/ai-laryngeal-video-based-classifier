@@ -8,6 +8,8 @@ import cv2
 import matplotlib.pyplot as plt
 import logging
 from datetime import datetime
+import csv
+import os
 
 from video_classifier.models.resnet3d import create_model
 from video_classifier.utils.logger import ExperimentLogger
@@ -30,14 +32,17 @@ def parse_args():
     return parser.parse_args()
 
 class VideoInference:
-    def __init__(self, model_path, sampling_method='uniform', num_frames=32, fps=30, device='cuda'):
+    def __init__(self, model_path, sampling_method='uniform', num_frames=32, fps=30, device='cuda', log_dir=None):
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         self.num_frames = num_frames
         self.sampling_method = sampling_method
+        self.fps = fps
+        self.log_dir = log_dir
+        self.sampled_frames = {}  # Store sampled frames for each video
+        self.dynamic_fps_info = {}  # Store dynamic FPS information
         
         # Set random seed for reproducibility
-        random.seed(42)
-        np.random.seed(42)
+        self.set_random_seed(42)
         
         # Initialize model
         from video_classifier.models.resnet3d import create_model
@@ -61,6 +66,12 @@ class VideoInference:
         self.mean = [0.45, 0.45, 0.45]
         self.std = [0.225, 0.225, 0.225]
     
+    def set_random_seed(self, seed):
+        """Set random seed for reproducibility."""
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        
     def get_video_properties(self, video_path):
         """Get video properties using OpenCV"""
         cap = cv2.VideoCapture(video_path)
@@ -88,6 +99,15 @@ class VideoInference:
             list: Frame indices to sample
             float: Dynamic FPS used if applicable, None otherwise
         """
+        # Check if we already have cached indices for this video
+        if video_path in self.sampled_frames:
+            return self.sampled_frames[video_path], self.dynamic_fps_info.get(video_path)
+            
+        # Set a video-specific seed based on the filename for consistent sampling
+        video_seed = int(hash(os.path.basename(video_path)) % 10000000)
+        random.seed(video_seed)
+        np.random.seed(video_seed)
+        
         # Initialize dynamic FPS to None
         dynamic_fps = None
         
@@ -154,6 +174,14 @@ class VideoInference:
                     step = total_frames / self.num_frames
                     indices = [min(int(i * step), total_frames - 1) for i in range(self.num_frames)]
         
+        # Reset the global random seed
+        self.set_random_seed(42)
+        
+        # Cache the results
+        self.sampled_frames[video_path] = indices
+        if dynamic_fps:
+            self.dynamic_fps_info[video_path] = dynamic_fps
+        
         return indices, dynamic_fps
     
     def get_frame_from_video(self, video_path, frame_idx):
@@ -174,6 +202,47 @@ class VideoInference:
         # Convert BGR to RGB
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return frame
+    
+    def save_sampled_frames(self):
+        """
+        Save the sampled frames to a CSV file for reproducibility and verification.
+        """
+        if not self.log_dir:
+            print("No log directory provided, cannot save sampled frames")
+            return
+            
+        # Create CSV filename based on the sampling method
+        csv_path = os.path.join(self.log_dir, f"inference_sampled_frames_{self.sampling_method}.csv")
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        
+        # Write to CSV
+        with open(csv_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            # Write header
+            writer.writerow(['video_filename', 'total_frames', 'sampled_frames', 'dynamic_fps'])
+            
+            # Write data for each video
+            for video_path in sorted(self.sampled_frames.keys()):
+                # Get total frames for this video
+                cap = cv2.VideoCapture(video_path)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                cap.release()
+                
+                # Get the sampled indices and format as string
+                indices = self.sampled_frames[video_path]
+                indices_str = ','.join(map(str, indices))
+                
+                # Get dynamic FPS info if available
+                dynamic_fps = self.dynamic_fps_info.get(video_path, "")
+                
+                # Extract just the filename for cleaner output
+                video_filename = os.path.basename(video_path)
+                
+                writer.writerow([video_filename, total_frames, indices_str, dynamic_fps])
+        
+        print(f"Saved {len(self.sampled_frames)} sampled frame records to {csv_path}")
     
     def visualize_sampling(self, video_path, frame_indices, dynamic_fps, save_path):
         """
@@ -292,6 +361,9 @@ class VideoInference:
             # Sample frames based on sampling method
             frame_indices, dynamic_fps = self.get_sampling_indices(video_path, total_frames)
             
+            # Save sampled frames info to CSV
+            self.save_sampled_frames()
+            
             # Visualize sampling if requested
             if visualize and viz_dir:
                 Path(viz_dir).mkdir(parents=True, exist_ok=True)
@@ -370,7 +442,8 @@ def main():
             model_path=args.model_path,
             sampling_method=args.sampling_method,
             num_frames=args.num_frames,
-            device=device
+            device=device,
+            log_dir=str(exp_logger.get_experiment_dir())  # Pass log_dir for saving sampled frames
         )
         
         # Make prediction
@@ -403,7 +476,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
 """
 Example usage:
 python3 resnet50-3d-video/inference.py \

@@ -90,7 +90,12 @@ def main():
         
         # Create dataloaders
         logger.info("Creating dataloaders...")
-        datasets, dataloaders = create_dataloaders(args, logger)
+        # Pass the experiment directory to save sampled frames
+        datasets, dataloaders = create_dataloaders(
+            args, 
+            logger, 
+            log_dir=str(exp_logger.get_experiment_dir())
+        )
         logger.info("Dataloaders created successfully")
         
         # Create visualization directory
@@ -189,9 +194,9 @@ python3 resnet50-3d-video/main.py \
 --test_data_dir artifacts/duhs-gss-split-5:v0/organized_dataset \
 --log_dir logs \
 --model_dir resnet50-3d-video-models \
---train_sampling uniform \
---val_sampling uniform \
---test_sampling uniform \
+--train_sampling random_window \
+--val_sampling random_window \
+--test_sampling random_window \
 --num_frames 32 \
 --batch_size 2 \
 --epochs 30 \

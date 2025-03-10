@@ -16,10 +16,12 @@ import logging
 import numpy as np
 import random
 import cv2
+import csv
+import os
 
 class VideoDataset(Dataset):
     def __init__(self, root_dir, mode='train', sampling_method='uniform', 
-                 num_frames=32, fps=30, stride=0.5, logger=None):
+                 num_frames=32, fps=30, stride=0.5, logger=None, log_dir=None):
         """
         Initialize the video dataset.
         
@@ -31,6 +33,7 @@ class VideoDataset(Dataset):
             fps (int): Frames per second of videos 
             stride (float): Stride fraction for sliding window
             logger (logging.Logger): Logger instance
+            log_dir (str): Directory to save sampling logs
         """
         self.root_dir = Path(root_dir) / mode
         self.mode = mode
@@ -39,13 +42,23 @@ class VideoDataset(Dataset):
         self.logger = logger or logging.getLogger(__name__)
         self.fps = fps
         self.stride = stride
+        self.log_dir = log_dir
+        
+        # For storing sampled frames for each video
+        self.cached_indices = {}
         
         # Set random seed for reproducibility
-        random.seed(42)
-        np.random.seed(42)
+        # Use a fixed seed for consistent sampling
+        self.set_random_seed(42)
         
         self._setup_data_paths()
         self._setup_transforms()
+        
+    def set_random_seed(self, seed):
+        """Set random seed for reproducibility."""
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
         
     def _setup_data_paths(self):
         """Set up video paths and labels."""
@@ -66,6 +79,7 @@ class VideoDataset(Dataset):
     def get_sampling_indices(self, video_path, total_frames):
         """
         Get frame indices based on sampling method, with dynamic FPS for short videos.
+        Uses cached indices if available for reproducibility.
         
         Args:
             video_path (str): Path to the video file
@@ -74,6 +88,15 @@ class VideoDataset(Dataset):
         Returns:
             list: Frame indices to sample
         """
+        # Check if we already have cached indices for this video
+        if video_path in self.cached_indices:
+            return self.cached_indices[video_path]
+        
+        # Set a video-specific seed based on the filename for consistent sampling
+        video_seed = int(hash(os.path.basename(video_path)) % 10000000)
+        random.seed(video_seed)
+        np.random.seed(video_seed)
+            
         # For videos with enough frames, use standard sampling
         if total_frames >= self.num_frames:
             if self.sampling_method == 'random':
@@ -136,6 +159,12 @@ class VideoDataset(Dataset):
                     # Create evenly spaced indices that might include duplicates
                     step = total_frames / self.num_frames
                     indices = [min(int(i * step), total_frames - 1) for i in range(self.num_frames)]
+        
+        # Reset the global random seed
+        self.set_random_seed(42)
+        
+        # Cache the indices
+        self.cached_indices[video_path] = indices
         
         return indices
             
@@ -212,3 +241,49 @@ class VideoDataset(Dataset):
         except Exception as e:
             self.logger.error(f"Error loading video {video_path}: {str(e)}")
             raise
+    
+    def save_sampled_indices(self):
+        """
+        Save the cached sampled indices to a CSV file.
+        This ensures reproducibility and allows verification of sampling.
+        """
+        if not self.log_dir:
+            self.logger.warning("No log directory provided, cannot save sampled indices")
+            return
+            
+        # Ensure we have indices cached for all videos
+        for video_path in self.video_paths:
+            if video_path not in self.cached_indices:
+                # Force loading this video to cache its indices
+                cap = cv2.VideoCapture(video_path)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                cap.release()
+                self.get_sampling_indices(video_path, total_frames)
+        
+        # Create CSV filename based on mode and sampling method
+        csv_path = os.path.join(self.log_dir, f"sampled_frames_{self.mode}_{self.sampling_method}.csv")
+        
+        # Write to CSV
+        with open(csv_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            # Write header
+            writer.writerow(['video_filename', 'total_frames', 'sampled_frames'])
+            
+            # Write data for each video
+            for video_path in sorted(self.video_paths):
+                indices = self.cached_indices[video_path]
+                
+                # Get total frames for this video
+                cap = cv2.VideoCapture(video_path)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                cap.release()
+                
+                # Format indices as a string
+                indices_str = ','.join(map(str, indices))
+                
+                # Extract just the filename for cleaner output
+                video_filename = os.path.basename(video_path)
+                
+                writer.writerow([video_filename, total_frames, indices_str])
+        
+        self.logger.info(f"Saved {len(self.cached_indices)} sampled frame records to {csv_path}")

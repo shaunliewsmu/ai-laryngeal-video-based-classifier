@@ -18,7 +18,7 @@ def video_collate_fn(batch):
     
     return clips, labels
 
-def create_dataloaders(args, logger):
+def create_dataloaders(args, logger, log_dir=None):
     """Create data loaders for train, validation, and test sets."""
     sampling_methods = {
         'train': args.train_sampling,
@@ -41,8 +41,13 @@ def create_dataloaders(args, logger):
                 mode=split,
                 sampling_method=sampling_methods[split],
                 num_frames=args.num_frames,
-                logger=logger
+                logger=logger,
+                log_dir=log_dir  # Pass log_dir to save sampled frames
             )
+            
+            # Save the sampled frames indices for reproducibility
+            if log_dir:
+                datasets[split].save_sampled_indices()
             
             dataloaders[split] = DataLoader(
                 datasets[split],
@@ -69,8 +74,13 @@ def create_dataloaders(args, logger):
             mode='test',
             sampling_method=sampling_methods['test'],
             num_frames=args.num_frames,
-            logger=logger
+            logger=logger,
+            log_dir=log_dir  # Pass log_dir to save sampled frames
         )
+        
+        # Save the sampled frames indices for reproducibility
+        if log_dir:
+            datasets['test'].save_sampled_indices()
         
         dataloaders['test'] = DataLoader(
             datasets['test'],
